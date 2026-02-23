@@ -14,6 +14,7 @@ const state = {
   textFields: [],        // array of TextField objects
   selectedField: null,   // currently selected TextField or null
   lastStyle: null,       // style copied from last-edited field (for new field defaults)
+  lastPreset: 'classic', // preset name of last-edited field (or null if manually edited)
   dragState: null,       // { field, startX, startY, origLeft, origTop }
 };
 
@@ -29,7 +30,7 @@ const PRESETS = {
     outlineColor: '#000000',
     outlineWidth: 2,
   },
-  lemon: {
+  cinema: {
     font:         "'Helvetica Neue', Helvetica, sans-serif",
     size:         5,   // percent of image width
     weight:       '400',
@@ -62,7 +63,7 @@ const fontControls   = document.getElementById('font-controls');
 const ctrlFont         = document.getElementById('ctrl-font');
 const ctrlSize         = document.getElementById('ctrl-size');
 const ctrlSizeVal      = document.getElementById('ctrl-size-val');
-const ctrlWeight       = document.getElementById('ctrl-weight');
+const ctrlBold         = document.getElementById('ctrl-bold');
 const ctrlItalic       = document.getElementById('ctrl-italic');
 const ctrlFgColor      = document.getElementById('ctrl-fg-color');
 const ctrlOutlineColor = document.getElementById('ctrl-outline-color');
@@ -300,6 +301,7 @@ class TextField {
 function addTextField(xPct, yPct) {
   const style = defaultStyle();
   const tf = new TextField(xPct, yPct, style);
+  tf.activePreset = state.lastPreset; // inherit last-used preset (null = manually edited)
   state.textFields.push(tf);
   // Don't call selectField() here — the focus event on innerEl will do it.
   // Use a short timeout so the element is fully laid out before focus.
@@ -326,7 +328,8 @@ function selectField(tf) {
   }
   if (state.selectedField) {
     state.selectedField.deselect();
-    state.lastStyle = { ...state.selectedField.style };
+    state.lastStyle  = { ...state.selectedField.style };
+    state.lastPreset = state.selectedField.activePreset ?? null;
   }
   state.selectedField = tf;
   tf.select();
@@ -336,7 +339,8 @@ function selectField(tf) {
 
 function deselectAll() {
   if (state.selectedField) {
-    state.lastStyle = { ...state.selectedField.style };
+    state.lastStyle  = { ...state.selectedField.style };
+    state.lastPreset = state.selectedField.activePreset ?? null;
     state.selectedField.deselect();
     state.selectedField = null;
   }
@@ -504,16 +508,17 @@ function updatePanel() {
 
 function loadFieldStyle(tf) {
   const s = tf.style;
-  ctrlFont.value         = s.font;
-  ctrlSize.value          = s.size;
-  ctrlSizeVal.textContent = s.size + '%';
-  ctrlWeight.value       = s.weight;
+  ctrlFont.value                  = s.font;
+  ctrlSize.value                  = s.size;
+  ctrlSizeVal.textContent         = s.size + '%';
+  ctrlBold.classList.toggle('active', parseInt(s.weight) >= 700);
   ctrlItalic.classList.toggle('active', s.italic);
-  ctrlFgColor.value      = s.fgColor;
-  ctrlOutlineColor.value = s.outlineColor;
-  ctrlOutlineWidth.value = s.outlineWidth;
+  ctrlFgColor.value               = s.fgColor;
+  ctrlOutlineColor.value          = s.outlineColor;
+  ctrlOutlineWidth.value          = s.outlineWidth;
   ctrlOutlineWidthVal.textContent = s.outlineWidth;
   alignBtns.forEach(b => b.classList.toggle('active', b.dataset.align === s.align));
+  presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === tf.activePreset));
 }
 
 function applyControlsToSelected(patch) {
@@ -522,30 +527,54 @@ function applyControlsToSelected(patch) {
   state.lastStyle = { ...state.selectedField.style };
 }
 
+// Clear the active preset indicator when the user manually edits any control.
+function clearPreset() {
+  if (state.selectedField) state.selectedField.activePreset = null;
+  state.lastPreset = null;
+  presetBtns.forEach(b => b.classList.remove('active'));
+}
+
 // Control listeners
-ctrlFont.addEventListener('change', () => applyControlsToSelected({ font: ctrlFont.value }));
+ctrlFont.addEventListener('change', () => {
+  applyControlsToSelected({ font: ctrlFont.value });
+  clearPreset();
+});
 
 ctrlSize.addEventListener('input', () => {
   const v = parseFloat(ctrlSize.value);
   ctrlSizeVal.textContent = v + '%';
   applyControlsToSelected({ size: v });
+  clearPreset();
 });
 
-ctrlWeight.addEventListener('change', () => applyControlsToSelected({ weight: ctrlWeight.value }));
+ctrlBold.addEventListener('click', () => {
+  const isNowBold = !ctrlBold.classList.contains('active');
+  ctrlBold.classList.toggle('active', isNowBold);
+  applyControlsToSelected({ weight: isNowBold ? '700' : '400' });
+  clearPreset();
+});
 
 ctrlItalic.addEventListener('click', () => {
   const isNowItalic = !ctrlItalic.classList.contains('active');
   ctrlItalic.classList.toggle('active', isNowItalic);
   applyControlsToSelected({ italic: isNowItalic });
+  clearPreset();
 });
 
-ctrlFgColor.addEventListener('input', () => applyControlsToSelected({ fgColor: ctrlFgColor.value }));
-ctrlOutlineColor.addEventListener('input', () => applyControlsToSelected({ outlineColor: ctrlOutlineColor.value }));
+ctrlFgColor.addEventListener('input', () => {
+  applyControlsToSelected({ fgColor: ctrlFgColor.value });
+  clearPreset();
+});
+ctrlOutlineColor.addEventListener('input', () => {
+  applyControlsToSelected({ outlineColor: ctrlOutlineColor.value });
+  clearPreset();
+});
 
 ctrlOutlineWidth.addEventListener('input', () => {
   const v = parseFloat(ctrlOutlineWidth.value);
   ctrlOutlineWidthVal.textContent = v;
   applyControlsToSelected({ outlineWidth: v });
+  clearPreset();
 });
 
 alignBtns.forEach(btn => {
@@ -553,6 +582,7 @@ alignBtns.forEach(btn => {
     alignBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     applyControlsToSelected({ align: btn.dataset.align });
+    clearPreset();
   });
 });
 
@@ -564,6 +594,8 @@ presetBtns.forEach(btn => {
     const { size: _ignored, ...presetWithoutSize } = preset;
     applyControlsToSelected(presetWithoutSize);
     if (state.selectedField) {
+      state.selectedField.activePreset = btn.dataset.preset;
+      state.lastPreset = btn.dataset.preset;
       loadFieldStyle(state.selectedField);
     }
   });

@@ -12,7 +12,6 @@
   <div id="upload-screen" class="screen active">
     <div class="upload-inner">
       <h1 class="wordmark">Subtext</h1>
-      <p class="tagline">Add captions to your images.</p>
       <label class="upload-btn" for="file-input">
         Choose an Image
         <input type="file" id="file-input" accept="image/*" />
@@ -45,74 +44,72 @@
 
       <div id="font-controls" class="hidden">
 
-        <div class="controls-row controls-row--top">
-          <div class="control-group control-group--typeface">
-            <label class="control-label">Typeface</label>
+        <!-- Presets — always first -->
+        <div class="controls-row controls-row--presets">
+          <span class="control-label">Presets</span>
+          <div class="preset-pills">
+            <button class="preset-btn active" data-preset="classic">Classic</button>
+            <button class="preset-btn" data-preset="cinema">Cin&eacute;ma</button>
+          </div>
+        </div>
+
+        <!-- Typeface with Bold + Italic inline -->
+        <div class="controls-row controls-row--typeface">
+          <span class="control-label">Typeface</span>
+          <div class="typeface-row">
             <select id="ctrl-font">
               <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
               <option value="Georgia, 'Times New Roman', serif">Georgia</option>
               <option value="'Palatino Linotype', Palatino, serif">Palatino</option>
-              <option value="'Garamond', 'EB Garamond', serif">Garamond</option>
+              <option value="'Garamond', 'EB Garamond', 'GaramondIO', serif">Garamond</option>
               <option value="'Baskerville', 'Libre Baskerville', serif">Baskerville</option>
               <option value="'Futura', 'Century Gothic', sans-serif">Futura</option>
               <option value="'Gill Sans', 'Gill Sans MT', sans-serif">Gill Sans</option>
               <option value="'Courier New', Courier, monospace">Courier</option>
             </select>
-          </div>
-
-          <div class="control-group control-group--size">
-            <label class="control-label">Size</label>
-            <input type="range" id="ctrl-size" min="1" max="25" step="0.5" value="5" />
-            <span id="ctrl-size-val">5%</span>
+            <button id="ctrl-bold" class="style-btn" title="Bold">B</button>
+            <button id="ctrl-italic" class="style-btn" title="Italic">I</button>
           </div>
         </div>
 
-        <div class="controls-row controls-row--mid">
-          <div class="control-group control-group--weight">
-            <label class="control-label">Weight</label>
-            <select id="ctrl-weight">
-              <option value="300">Light</option>
-              <option value="400">Regular</option>
-              <option value="700">Bold</option>
-              <option value="900">Black</option>
-            </select>
+        <!-- Size + Align -->
+        <div class="controls-row controls-row--size-align">
+          <div class="control-group control-group--size">
+            <div class="row-header">
+              <span class="control-label">Size</span>
+              <span id="ctrl-size-val">5%</span>
+            </div>
+            <input type="range" id="ctrl-size" min="1" max="25" step="0.5" value="5" />
           </div>
-
-          <div class="control-group control-group--style">
-            <label class="control-label">Style</label>
-            <button id="ctrl-italic" class="toggle-btn" title="Toggle italic">Italic</button>
-          </div>
-
           <div class="control-group control-group--align">
-            <label class="control-label">Align</label>
+            <span class="control-label">Align</span>
             <div class="btn-group">
-              <button data-align="left"  class="align-btn active" title="Left">&#8676;</button>
-              <button data-align="center" class="align-btn" title="Center">&#8596;</button>
+              <button data-align="left"  class="align-btn" title="Left">&#8676;</button>
+              <button data-align="center" class="align-btn active" title="Center">&#8596;</button>
               <button data-align="right"  class="align-btn" title="Right">&#8677;</button>
             </div>
           </div>
         </div>
 
+        <!-- Colors + Stroke -->
         <div class="controls-row controls-row--colors">
-          <div class="control-group">
-            <label class="control-label">Text</label>
-            <input type="color" id="ctrl-fg-color" value="#ffffff" />
+          <div class="colors-left">
+            <div class="control-group">
+              <span class="control-label">Text</span>
+              <input type="color" id="ctrl-fg-color" value="#ffffff" />
+            </div>
+            <div class="control-group">
+              <span class="control-label">Outline</span>
+              <input type="color" id="ctrl-outline-color" value="#000000" />
+            </div>
           </div>
-          <div class="control-group">
-            <label class="control-label">Outline</label>
-            <input type="color" id="ctrl-outline-color" value="#000000" />
-          </div>
-          <div class="control-group control-group--outline-width">
-            <label class="control-label">Stroke</label>
+          <div class="control-group control-group--stroke">
+            <div class="row-header">
+              <span class="control-label">Stroke</span>
+              <span id="ctrl-outline-width-val">2</span>
+            </div>
             <input type="range" id="ctrl-outline-width" min="0" max="20" step="0.5" value="2" />
-            <span id="ctrl-outline-width-val">2</span>
           </div>
-        </div>
-
-        <div class="controls-row controls-row--presets">
-          <span class="control-label">Presets:</span>
-          <button class="preset-btn" data-preset="classic">Classic</button>
-          <button class="preset-btn" data-preset="lemon">Lemon</button>
         </div>
 
       </div>

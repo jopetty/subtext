@@ -3,6 +3,40 @@
    Mobile-first, serif-forward
    =========================== */
 
+/* ── Garamond fallback (garamontio) ── */
+@font-face {
+  font-family: 'GaramondIO';
+  src: url('fonts/garamontio.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GaramondIO';
+  src: url('fonts/garamontio_it.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ── Saira variable font (UI sans) ── */
+@font-face {
+  font-family: 'Saira';
+  src: url('fonts/saira.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Saira';
+  src: url('fonts/saira-italic.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -16,10 +50,11 @@
   --ink-muted: #7a6e5e;
   --accent:    #3b2e1e;
   --danger:    #b33a2e;
-  --panel-h:   220px;
+  --panel-h:   248px;
   --top-bar-h: 52px;
   --radius:    6px;
-  --font-ui:   Georgia, 'Times New Roman', serif;
+  --font-ui:   'Saira', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: Georgia, 'Times New Roman', serif;
 }
 
 html, body {
@@ -31,6 +66,8 @@ html, body {
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 15px;
+  /* Saira wdth axis — slightly condensed for a tighter UI feel */
+  font-variation-settings: 'wdth' 88;
 }
 
 /* ===== SCREENS ===== */
@@ -64,9 +101,10 @@ html, body {
   font-size: 2.8rem;
   font-weight: 400;
   letter-spacing: 0.04em;
-  margin: 0 0 0.25rem;
+  margin: 0 0 2.5rem;
   color: var(--accent);
   font-style: italic;
+  font-family: var(--font-serif);
 }
 
 .tagline {
@@ -130,6 +168,7 @@ html, body {
   font-style: italic;
   color: var(--accent);
   letter-spacing: 0.04em;
+  font-family: var(--font-serif);
 }
 
 .icon-btn {
@@ -349,7 +388,7 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 0.5rem 0.75rem;
+  padding: 0.45rem 0.85rem;
 }
 
 #no-selection-hint {
@@ -357,35 +396,40 @@ html, body {
   color: var(--ink-muted);
   font-style: italic;
   font-size: 0.9rem;
+  font-family: var(--font-serif);
 }
 
 #font-controls {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.38rem;
   height: 100%;
-  justify-content: center;
+  justify-content: space-evenly;
 }
 
 #font-controls.hidden {
   display: none;
 }
 
+/* ── Shared row structure ── */
+
 .controls-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.6rem;
   flex-wrap: nowrap;
 }
 
 .control-label {
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.09em;
   color: var(--ink-muted);
   white-space: nowrap;
   display: block;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
+  font-family: var(--font-ui);
+  font-weight: 500;
 }
 
 .control-group {
@@ -393,35 +437,155 @@ html, body {
   flex-direction: column;
 }
 
-.control-group--typeface {
+/* ── Presets row (column: label above pills) ── */
+
+.controls-row--presets {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.preset-pills {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.preset-btn {
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  padding: 0.22rem 0.8rem;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  font-style: normal;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+
+.preset-btn:hover:not(.active) {
+  border-color: var(--ink-muted);
+}
+
+.preset-btn.active {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+
+.preset-btn:active {
+  opacity: 0.72;
+}
+
+/* ── Typeface row (column: label above dropdown+B+I) ── */
+
+.controls-row--typeface {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.28rem;
+}
+
+.typeface-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.typeface-row select {
   flex: 1;
   min-width: 0;
 }
 
-.control-group--size {
+/* Bold / Italic style-toggle buttons */
+
+.style-btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
   display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 80px;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.88rem;
+  font-family: var(--font-ui);
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  line-height: 1;
+  padding: 0;
+}
+
+#ctrl-bold   { font-weight: 700; }
+#ctrl-italic { font-style: italic; }
+
+.style-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.style-btn:active { opacity: 0.7; }
+
+/* ── Size + Align row ── */
+
+.controls-row--size-align {
+  align-items: flex-end;
+  gap: 0.85rem;
 }
 
 .control-group--size {
-  flex-direction: column;
+  flex: 2;
+  min-width: 0;
 }
 
-.control-group--size input[type=range] {
-  width: 100%;
+/* No extra width override needed — input[type=range] is block by default */
+
+.control-group--align {
+  flex-shrink: 0;
 }
 
-.control-group--outline-width {
+.row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 3px;
+}
+
+.row-header .control-label {
+  margin-bottom: 0;
+}
+
+#ctrl-size-val,
+#ctrl-outline-width-val {
+  display: none;
+}
+
+/* ── Colors + Stroke row ── */
+
+.controls-row--colors {
+  align-items: flex-end;
+  gap: 0.7rem;
+}
+
+.colors-left {
+  display: flex;
+  gap: 0.55rem;
+  flex-shrink: 0;
+  align-items: flex-end;
+}
+
+.control-group--stroke {
   flex: 1;
+  min-width: 0;
 }
 
-.control-group--outline-width input[type=range] {
-  width: 100%;
-}
-
-/* Form elements */
+/* ── Form elements ── */
 
 select,
 input[type="color"] {
@@ -434,14 +598,15 @@ input[type="color"] {
 }
 
 select {
-  padding: 0.3rem 0.4rem;
+  padding: 0.28rem 0.4rem;
   width: 100%;
   cursor: pointer;
+  height: 36px;
 }
 
 input[type="color"] {
-  width: 38px;
-  height: 32px;
+  width: 40px;
+  height: 36px;
   padding: 2px 3px;
   cursor: pointer;
 }
@@ -449,63 +614,48 @@ input[type="color"] {
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
+  /* Match the height of color inputs (36px) so all controls on a row align. */
+  height: 36px;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  display: block;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   background: var(--border);
   border-radius: 2px;
-  outline: none;
-  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
+  width: 14px;
+  height: 32px;
+  border-radius: 4px;
   background: var(--accent);
   cursor: pointer;
+  margin-top: -14px; /* center on 4px track: -(32-4)/2 */
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
+  width: 14px;
+  height: 32px;
+  border-radius: 4px;
   background: var(--accent);
   cursor: pointer;
   border: none;
 }
 
-#ctrl-size-val,
-#ctrl-outline-width-val {
-  font-size: 0.75rem;
-  color: var(--ink-muted);
-  min-width: 20px;
-  text-align: right;
-}
-
-/* Toggle / icon buttons in controls */
-
-.toggle-btn {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: 0.85rem;
-  padding: 0.28rem 0.65rem;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-  font-style: italic;
-}
-
-.toggle-btn.active {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-
-.toggle-btn:active {
-  opacity: 0.7;
-}
+/* ── Align buttons ── */
 
 .btn-group {
   display: flex;
@@ -518,8 +668,8 @@ input[type="range"]::-moz-range-thumb {
   background: var(--bg);
   color: var(--ink);
   font-size: 1rem;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -535,36 +685,6 @@ input[type="range"]::-moz-range-thumb {
 
 .align-btn:active {
   opacity: 0.7;
-}
-
-/* Presets row */
-
-.controls-row--presets {
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.preset-btn {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: 0.8rem;
-  padding: 0.25rem 0.7rem;
-  cursor: pointer;
-  transition: background 0.12s;
-  font-style: italic;
-}
-
-.preset-btn:hover {
-  background: var(--border);
-}
-
-.preset-btn:active {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
 }
 
 /* ===== iOS SAVE OVERLAY ===== */
@@ -639,14 +759,10 @@ input[type="range"]::-moz-range-thumb {
 
 @media (min-width: 600px) {
   :root {
-    --panel-h: 200px;
+    --panel-h: 252px;
   }
 
   #base-image {
     max-height: calc(100vh - var(--top-bar-h) - var(--panel-h) - 30px);
-  }
-
-  .controls-row--top {
-    gap: 1rem;
   }
 }
