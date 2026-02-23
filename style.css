@@ -345,8 +345,6 @@ html, body {
   right: -14px;
   background: var(--accent);
   cursor: grab;
-  font-size: 11px;
-  letter-spacing: -0.5px;
   /* Never let the browser treat touches on the drag handle as scroll gestures */
   touch-action: none;
 }
@@ -767,14 +765,43 @@ input[type="range"]::-moz-range-thumb {
 /* ===== Utility ===== */
 .hidden { display: none !important; }
 
-/* ===== DESKTOP tweaks ===== */
+/* ===== DESKTOP — sidebar layout ===== */
 
 @media (min-width: 600px) {
-  :root {
-    --panel-h: 252px;
+  /* Override the mobile flex-column with a 2-column grid:
+     top bar spans full width; canvas + sidebar share the row below. */
+  #editor-screen.active {
+    display: grid;
+    grid-template-columns: 1fr 350px;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "topbar topbar"
+      "canvas sidebar";
   }
 
+  #top-bar      { grid-area: topbar; }
+  #canvas-wrapper { grid-area: canvas; }
+
+  /* Sidebar replaces the bottom panel */
+  #bottom-panel {
+    grid-area: sidebar;
+    height: auto;          /* fill the grid row */
+    border-top: none;
+    border-left: 1px solid var(--border);
+    padding: 1.1rem 1rem;
+    justify-content: flex-start;
+    overflow-y: auto;
+  }
+
+  #font-controls {
+    height: auto;
+    justify-content: flex-start;
+    gap: 0.9rem;
+  }
+
+  /* Image no longer constrained by panel height */
   #base-image {
-    max-height: calc(100vh - var(--top-bar-h) - var(--panel-h) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 30px);
+    max-height: calc(100vh - var(--top-bar-h) - env(safe-area-inset-top, 0px) - 30px);
+    max-width: 100%;
   }
 }

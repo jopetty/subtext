@@ -156,7 +156,7 @@ class TextField {
 
     const drag = document.createElement('div');
     drag.className = 'text-field-drag';
-    drag.innerHTML = '&#x2B0C;'; // ⬌ four-way arrow
+    drag.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 1v12M1 7h12M7 1L5 3M7 1l2 2M7 13l-2-2M7 13l2-2M1 7l2-2M1 7l2 2M13 7l-2-2M13 7l-2 2"/></svg>';
     drag.title = 'Move';
 
     const inner = document.createElement('div');
@@ -231,9 +231,9 @@ class TextField {
       selectField(this);
     });
 
-    // POINTER on wrapper: stop propagation to canvas listeners, forward
-    // focus to innerEl if the click landed on the wrapper border area,
-    // and start drag tracking.
+    // POINTER on wrapper: stop propagation to canvas listeners and forward
+    // focus to innerEl if the click landed on the wrapper border area.
+    // Dragging is handled exclusively by the drag handle.
     this.el.addEventListener('pointerdown', (e) => {
       if (e.target === this.delEl || e.target === this.dragEl) return;
       // Stop propagation so the canvas double-tap detector doesn't see this.
@@ -241,13 +241,9 @@ class TextField {
 
       if (e.target !== this.innerEl) {
         // Clicked the wrapper (not the text itself) — focus the editable.
-        // preventDefault here only so the wrapper div doesn't steal the
-        // focus in a way that skips innerEl.
         e.preventDefault();
         this.innerEl.focus();
       }
-
-      startDrag(e, this);
     });
 
     // Dedicated drag handle — preventDefault here is safe because this element
@@ -617,6 +613,56 @@ presetBtns.forEach(btn => {
 
 exportBtn.addEventListener('click', exportImage);
 
+// 3-pass separable box blur — O(n) per pass, good Gaussian approximation.
+// Works on any browser without ctx.filter support (e.g. Safari < 18).
+function softBlur(ctx, w, h, radius) {
+  if (radius < 0.5) return;
+  const r   = Math.max(1, Math.round(radius));
+  const id  = ctx.getImageData(0, 0, w, h);
+  const d   = id.data;
+  const tmp = new Uint8ClampedArray(d.length);
+  const diam = 2 * r + 1;
+
+  for (let pass = 0; pass < 3; pass++) {
+    // Horizontal pass: d → tmp
+    for (let y = 0; y < h; y++) {
+      const row = y * w * 4;
+      let rr = 0, gg = 0, bb = 0, aa = 0;
+      for (let kx = -r; kx <= r; kx++) {
+        const sx = Math.max(0, kx) * 4 + row;
+        rr += d[sx]; gg += d[sx+1]; bb += d[sx+2]; aa += d[sx+3];
+      }
+      for (let x = 0; x < w; x++) {
+        const i = row + x * 4;
+        tmp[i] = rr/diam; tmp[i+1] = gg/diam; tmp[i+2] = bb/diam; tmp[i+3] = aa/diam;
+        const lx = Math.max(0,   x - r    ) * 4 + row;
+        const rx = Math.min(w-1, x + r + 1) * 4 + row;
+        rr += d[rx]-d[lx]; gg += d[rx+1]-d[lx+1]; bb += d[rx+2]-d[lx+2]; aa += d[rx+3]-d[lx+3];
+      }
+    }
+    d.set(tmp);
+
+    // Vertical pass: d → tmp
+    for (let x = 0; x < w; x++) {
+      const col = x * 4;
+      let rr = 0, gg = 0, bb = 0, aa = 0;
+      for (let ky = -r; ky <= r; ky++) {
+        const sy = Math.max(0, ky) * w * 4 + col;
+        rr += d[sy]; gg += d[sy+1]; bb += d[sy+2]; aa += d[sy+3];
+      }
+      for (let y = 0; y < h; y++) {
+        const i = y * w * 4 + col;
+        tmp[i] = rr/diam; tmp[i+1] = gg/diam; tmp[i+2] = bb/diam; tmp[i+3] = aa/diam;
+        const ly = Math.max(0,   y - r    ) * w * 4 + col;
+        const ry = Math.min(h-1, y + r + 1) * w * 4 + col;
+        rr += d[ry]-d[ly]; gg += d[ry+1]-d[ly+1]; bb += d[ry+2]-d[ly+2]; aa += d[ry+3]-d[ly+3];
+      }
+    }
+    d.set(tmp);
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
 async function exportImage() {
   const img = baseImage;
   const nw = state.imageNaturalW;
@@ -666,14 +712,14 @@ async function exportImage() {
                s.align === 'right' ? cx + elHalfW :
                cx;
 
-    // Draw text to a temp canvas first, then composite with blur onto main.
-    // Safari supports ctx.filter for drawImage but not reliably for text primitives.
+    // Draw text to a temp canvas, optionally software-blur it, then composite.
+    // Using a software blur avoids ctx.filter which isn't supported in Safari < 18.
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width  = nw;
     tempCanvas.height = nh;
     const tc = tempCanvas.getContext('2d');
-    tc.font        = ctx.font;
-    tc.textAlign   = s.align;
+    tc.font         = ctx.font;
+    tc.textAlign    = s.align;
     tc.textBaseline = 'middle';
 
     lines.forEach((line, i) => {
@@ -691,10 +737,9 @@ async function exportImage() {
     });
 
     if (s.blur > 0) {
-      ctx.filter = `blur(${s.blur * scale}px)`;
+      softBlur(tc, nw, nh, s.blur * scale);
     }
     ctx.drawImage(tempCanvas, 0, 0);
-    ctx.filter = 'none';
   }
 
   const blob = await new Promise(resolve =>
