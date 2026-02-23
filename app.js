@@ -42,6 +42,17 @@ const PRESETS = {
     outlineWidth: 0,
     blur:         0,
   },
+  vaporwave: {
+    font:         "'Futura', 'Century Gothic', sans-serif",
+    size:         5,
+    weight:       '700',
+    italic:       false,
+    align:        'center',
+    fgColor:      '#ff71ce',
+    outlineColor: '#7b2fff',
+    outlineWidth: 4,
+    blur:         0,
+  },
 };
 
 function defaultStyle() {
