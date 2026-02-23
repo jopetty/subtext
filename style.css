@@ -1,0 +1,652 @@
+/* ===========================
+   SUBTEXT — stylesheet
+   Mobile-first, serif-forward
+   =========================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  --bg:        #f5f0e8;
+  --surface:   #fffdf8;
+  --border:    #d4c9b0;
+  --ink:       #1a1410;
+  --ink-muted: #7a6e5e;
+  --accent:    #3b2e1e;
+  --danger:    #b33a2e;
+  --panel-h:   220px;
+  --top-bar-h: 52px;
+  --radius:    6px;
+  --font-ui:   Georgia, 'Times New Roman', serif;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+}
+
+/* ===== SCREENS ===== */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+}
+
+.screen.active {
+  display: flex;
+}
+
+/* ===== UPLOAD SCREEN ===== */
+
+#upload-screen {
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.upload-inner {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  max-width: 360px;
+}
+
+.wordmark {
+  font-size: 2.8rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.25rem;
+  color: var(--accent);
+  font-style: italic;
+}
+
+.tagline {
+  font-size: 0.95rem;
+  color: var(--ink-muted);
+  margin: 0 0 2rem;
+  font-style: italic;
+}
+
+.upload-btn {
+  display: inline-block;
+  padding: 0.75rem 2rem;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: background 0.15s;
+  border: none;
+}
+
+.upload-btn:hover {
+  background: #5a4430;
+}
+
+.upload-btn input[type="file"] {
+  display: none;
+}
+
+.upload-hint {
+  margin-top: 1.2rem;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+/* ===== EDITOR SCREEN ===== */
+
+#editor-screen {
+  background: #222;
+}
+
+/* TOP BAR */
+
+#top-bar {
+  height: var(--top-bar-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.wordmark-small {
+  font-size: 1.25rem;
+  font-style: italic;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+.icon-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: 1.1rem;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+  transition: background 0.12s;
+}
+
+.icon-btn:hover {
+  background: var(--bg);
+}
+
+.icon-btn:active {
+  background: var(--border);
+}
+
+.export-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.45rem 1.1rem;
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: background 0.15s;
+}
+
+.export-btn:hover {
+  background: #5a4430;
+}
+
+.export-btn:active {
+  background: #3b2e1e;
+  transform: scale(0.97);
+}
+
+/* CANVAS WRAPPER */
+
+#canvas-wrapper {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background: #1a1a1a;
+}
+
+#canvas-container {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  user-select: none;
+}
+
+#base-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - var(--top-bar-h) - var(--panel-h) - 20px);
+  pointer-events: none;
+}
+
+/* ===== SNAP GUIDES ===== */
+
+.guide {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 5;
+}
+
+.guide.visible {
+  opacity: 1;
+}
+
+.guide-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: rgba(255, 215, 60, 0.35);
+}
+
+.guide-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+  background: rgba(255, 215, 60, 0.35);
+}
+
+.guide-v.snapped {
+  background: rgba(255, 215, 60, 0.85);
+  box-shadow: 0 0 4px rgba(255, 215, 60, 0.5);
+}
+
+.guide-h.snapped {
+  background: rgba(255, 215, 60, 0.85);
+  box-shadow: 0 0 4px rgba(255, 215, 60, 0.5);
+}
+
+/* ===== TEXT FIELDS ===== */
+
+.text-field {
+  position: absolute;
+  cursor: move;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Size to content width so the browser doesn't constrain it based on
+     the remaining space to the right of the `left` position, which would
+     cause text to reflow/wrap when the field is dragged toward the right edge. */
+  width: max-content;
+  /* Centered on tap point via JS transform */
+}
+
+
+.text-field-delete,
+.text-field-drag {
+  display: none;
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  font-family: sans-serif;
+  font-weight: 700;
+}
+
+.text-field.selected .text-field-delete,
+.text-field.selected .text-field-drag {
+  display: flex;
+}
+
+.text-field-delete {
+  top: -14px;
+  left: -14px;
+  background: var(--danger);
+  cursor: pointer;
+}
+
+.text-field-drag {
+  top: -14px;
+  right: -14px;
+  background: var(--accent);
+  cursor: grab;
+  font-size: 11px;
+  letter-spacing: -0.5px;
+  /* Never let the browser treat touches on the drag handle as scroll gestures */
+  touch-action: none;
+}
+
+.text-field-drag:active {
+  cursor: grabbing;
+}
+
+.text-field-inner {
+  position: relative;
+  min-width: 60px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+  cursor: text;
+  text-align: center;
+  /* Explicit line-height and padding so the selection outline
+     properly contains cap-height, descenders, and stroke overflow */
+  line-height: 1.25;
+  padding: 0.15em 0.2em;
+  /* Override parent's user-select: none so text editing works */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.text-field.selected .text-field-inner {
+  outline: 1.5px dashed rgba(255,255,255,0.6);
+  outline-offset: 4px;
+}
+
+/* Placeholder for empty contenteditable */
+.text-field-inner:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+  font-style: italic;
+}
+
+/* text-stroke via CSS paint-order trick, applied via JS inline styles */
+
+/* ===== BOTTOM PANEL ===== */
+
+#bottom-panel {
+  height: var(--panel-h);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.5rem 0.75rem;
+}
+
+#no-selection-hint {
+  text-align: center;
+  color: var(--ink-muted);
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+#font-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: 100%;
+  justify-content: center;
+}
+
+#font-controls.hidden {
+  display: none;
+}
+
+.controls-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: nowrap;
+}
+
+.control-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.control-group--typeface {
+  flex: 1;
+  min-width: 0;
+}
+
+.control-group--size {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 80px;
+}
+
+.control-group--size {
+  flex-direction: column;
+}
+
+.control-group--size input[type=range] {
+  width: 100%;
+}
+
+.control-group--outline-width {
+  flex: 1;
+}
+
+.control-group--outline-width input[type=range] {
+  width: 100%;
+}
+
+/* Form elements */
+
+select,
+input[type="color"] {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+}
+
+select {
+  padding: 0.3rem 0.4rem;
+  width: 100%;
+  cursor: pointer;
+}
+
+input[type="color"] {
+  width: 38px;
+  height: 32px;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: none;
+}
+
+#ctrl-size-val,
+#ctrl-outline-width-val {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  min-width: 20px;
+  text-align: right;
+}
+
+/* Toggle / icon buttons in controls */
+
+.toggle-btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  padding: 0.28rem 0.65rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  font-style: italic;
+}
+
+.toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.toggle-btn:active {
+  opacity: 0.7;
+}
+
+.btn-group {
+  display: flex;
+  gap: 2px;
+}
+
+.align-btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 1rem;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
+}
+
+.align-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.align-btn:active {
+  opacity: 0.7;
+}
+
+/* Presets row */
+
+.controls-row--presets {
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.preset-btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-style: italic;
+}
+
+.preset-btn:hover {
+  background: var(--border);
+}
+
+.preset-btn:active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* ===== iOS SAVE OVERLAY ===== */
+
+#ios-save-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+  padding: 1.5rem;
+}
+
+#ios-save-overlay img {
+  max-width: 100%;
+  max-height: 40vh;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+}
+
+#ios-save-overlay p {
+  color: #fff;
+  font-family: var(--font-ui);
+  font-style: italic;
+  font-size: 0.95rem;
+  text-align: center;
+  margin: 0;
+}
+
+.ios-overlay-divider {
+  color: rgba(255,255,255,0.4) !important;
+  font-size: 0.75rem !important;
+}
+
+.ios-open-btn {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.7rem 2.2rem;
+  font-family: var(--font-ui);
+  font-size: 1.05rem;
+  text-decoration: none;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.ios-open-btn:active {
+  opacity: 0.8;
+}
+
+#ios-save-overlay button {
+  background: transparent;
+  color: rgba(255,255,255,0.5);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: var(--radius);
+  padding: 0.5rem 1.5rem;
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+/* ===== Utility ===== */
+.hidden { display: none !important; }
+
+/* ===== DESKTOP tweaks ===== */
+
+@media (min-width: 600px) {
+  :root {
+    --panel-h: 200px;
+  }
+
+  #base-image {
+    max-height: calc(100vh - var(--top-bar-h) - var(--panel-h) - 30px);
+  }
+
+  .controls-row--top {
+    gap: 1rem;
+  }
+}

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Subtext</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Upload screen -->
+  <div id="upload-screen" class="screen active">
+    <div class="upload-inner">
+      <h1 class="wordmark">Subtext</h1>
+      <p class="tagline">Add captions to your images.</p>
+      <label class="upload-btn" for="file-input">
+        Choose an Image
+        <input type="file" id="file-input" accept="image/*" />
+      </label>
+      <p class="upload-hint">or paste an image from your clipboard</p>
+    </div>
+  </div>
+
+  <!-- Editor screen -->
+  <div id="editor-screen" class="screen">
+
+    <!-- Top bar -->
+    <header id="top-bar">
+      <button id="back-btn" class="icon-btn" title="Start over">&#8592;</button>
+      <span class="wordmark-small">Subtext</span>
+      <button id="export-btn" class="export-btn" title="Save image">Save</button>
+    </header>
+
+    <!-- Canvas wrapper (scrollable) -->
+    <div id="canvas-wrapper">
+      <div id="canvas-container">
+        <img id="base-image" alt="Uploaded image" />
+        <!-- Text fields are absolutely positioned inside here -->
+      </div>
+    </div>
+
+    <!-- Bottom panel: font controls -->
+    <div id="bottom-panel">
+      <div id="no-selection-hint">Double-tap image to add text</div>
+
+      <div id="font-controls" class="hidden">
+
+        <div class="controls-row controls-row--top">
+          <div class="control-group control-group--typeface">
+            <label class="control-label">Typeface</label>
+            <select id="ctrl-font">
+              <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
+              <option value="Georgia, 'Times New Roman', serif">Georgia</option>
+              <option value="'Palatino Linotype', Palatino, serif">Palatino</option>
+              <option value="'Garamond', 'EB Garamond', serif">Garamond</option>
+              <option value="'Baskerville', 'Libre Baskerville', serif">Baskerville</option>
+              <option value="'Futura', 'Century Gothic', sans-serif">Futura</option>
+              <option value="'Gill Sans', 'Gill Sans MT', sans-serif">Gill Sans</option>
+              <option value="'Courier New', Courier, monospace">Courier</option>
+            </select>
+          </div>
+
+          <div class="control-group control-group--size">
+            <label class="control-label">Size</label>
+            <input type="range" id="ctrl-size" min="1" max="25" step="0.5" value="5" />
+            <span id="ctrl-size-val">5%</span>
+          </div>
+        </div>
+
+        <div class="controls-row controls-row--mid">
+          <div class="control-group control-group--weight">
+            <label class="control-label">Weight</label>
+            <select id="ctrl-weight">
+              <option value="300">Light</option>
+              <option value="400">Regular</option>
+              <option value="700">Bold</option>
+              <option value="900">Black</option>
+            </select>
+          </div>
+
+          <div class="control-group control-group--style">
+            <label class="control-label">Style</label>
+            <button id="ctrl-italic" class="toggle-btn" title="Toggle italic">Italic</button>
+          </div>
+
+          <div class="control-group control-group--align">
+            <label class="control-label">Align</label>
+            <div class="btn-group">
+              <button data-align="left"  class="align-btn active" title="Left">&#8676;</button>
+              <button data-align="center" class="align-btn" title="Center">&#8596;</button>
+              <button data-align="right"  class="align-btn" title="Right">&#8677;</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="controls-row controls-row--colors">
+          <div class="control-group">
+            <label class="control-label">Text</label>
+            <input type="color" id="ctrl-fg-color" value="#ffffff" />
+          </div>
+          <div class="control-group">
+            <label class="control-label">Outline</label>
+            <input type="color" id="ctrl-outline-color" value="#000000" />
+          </div>
+          <div class="control-group control-group--outline-width">
+            <label class="control-label">Stroke</label>
+            <input type="range" id="ctrl-outline-width" min="0" max="20" step="0.5" value="2" />
+            <span id="ctrl-outline-width-val">2</span>
+          </div>
+        </div>
+
+        <div class="controls-row controls-row--presets">
+          <span class="control-label">Presets:</span>
+          <button class="preset-btn" data-preset="classic">Classic</button>
+          <button class="preset-btn" data-preset="lemon">Lemon</button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Export overlay (hidden canvas for rendering) -->
+  <canvas id="export-canvas" style="display:none;"></canvas>
+
+  <script src="app.js"></script>
+</body>
+</html>
