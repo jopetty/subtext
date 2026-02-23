@@ -70,6 +70,9 @@ const baseImage      = document.getElementById('base-image');
 const canvasContainer = document.getElementById('canvas-container');
 const exportCanvas   = document.getElementById('export-canvas');
 
+// True on phones/tablets — used to gate the single-tap-to-select behaviour.
+const isMobile = navigator.maxTouchPoints > 0;
+
 const noSelectionHint = document.getElementById('no-selection-hint');
 const fontControls   = document.getElementById('font-controls');
 
@@ -242,6 +245,19 @@ class TextField {
       selectField(this);
     });
 
+    // MOBILE: intercept taps on the inner element so that a first tap only
+    // selects the field (no keyboard), and a second tap on an already-selected
+    // field allows focus through normally (keyboard appears).
+    // On desktop, let the browser handle focus natively with no intervention.
+    this.innerEl.addEventListener('pointerdown', (e) => {
+      if (!isMobile) return;
+      if (state.selectedField !== this) {
+        e.preventDefault(); // blocks focus → no keyboard on first tap
+        selectField(this);
+      }
+      // already selected → fall through → browser focuses → keyboard appears
+    });
+
     // POINTER on wrapper: stop propagation to canvas listeners and forward
     // focus to innerEl if the click landed on the wrapper border area.
     // Dragging is handled exclusively by the drag handle.
@@ -251,9 +267,13 @@ class TextField {
       e.stopPropagation();
 
       if (e.target !== this.innerEl) {
-        // Clicked the wrapper (not the text itself) — focus the editable.
         e.preventDefault();
-        this.innerEl.focus();
+        // Mobile: only focus (open keyboard) if the field is already selected.
+        if (!isMobile || state.selectedField === this) {
+          this.innerEl.focus();
+        } else {
+          selectField(this);
+        }
       }
     });
 

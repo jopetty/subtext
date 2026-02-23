@@ -237,6 +237,9 @@ html, body {
   justify-content: center;
   position: relative;
   background: #1a1a1a;
+  /* Padding ensures the selection outline (outline-offset: 4px) is never
+     clipped when the image fills the full width of the wrapper. */
+  padding: 10px;
 }
 
 #canvas-container {
@@ -249,7 +252,7 @@ html, body {
 #base-image {
   display: block;
   max-width: 100%;
-  max-height: calc(100vh - var(--top-bar-h) - var(--panel-h) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px);
+  max-height: calc(100vh - var(--top-bar-h) - var(--panel-h) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 40px);
   pointer-events: none;
 }
 
@@ -801,7 +804,7 @@ input[type="range"]::-moz-range-thumb {
 
   /* Image no longer constrained by panel height */
   #base-image {
-    max-height: calc(100vh - var(--top-bar-h) - env(safe-area-inset-top, 0px) - 30px);
+    max-height: calc(100vh - var(--top-bar-h) - env(safe-area-inset-top, 0px) - 50px);
     max-width: 100%;
   }
 }
