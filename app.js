@@ -29,6 +29,7 @@ const PRESETS = {
     fgColor:      '#ffffff',
     outlineColor: '#000000',
     outlineWidth: 2,
+    blur:         0,
   },
   cinema: {
     font:         "'Helvetica Neue', Helvetica, sans-serif",
@@ -39,11 +40,12 @@ const PRESETS = {
     fgColor:      '#faf0a0',
     outlineColor: '#000000',
     outlineWidth: 0,
+    blur:         0,
   },
 };
 
 function defaultStyle() {
-  return state.lastStyle ? { ...state.lastStyle } : { ...PRESETS.classic };
+  return state.lastStyle ? { ...state.lastStyle } : { ...PRESETS.classic, blur: 0 };
 }
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -65,6 +67,7 @@ const ctrlSize         = document.getElementById('ctrl-size');
 const ctrlSizeVal      = document.getElementById('ctrl-size-val');
 const ctrlBold         = document.getElementById('ctrl-bold');
 const ctrlItalic       = document.getElementById('ctrl-italic');
+const ctrlBlur         = document.getElementById('ctrl-blur');
 const ctrlFgColor      = document.getElementById('ctrl-fg-color');
 const ctrlOutlineColor = document.getElementById('ctrl-outline-color');
 const ctrlOutlineWidth = document.getElementById('ctrl-outline-width');
@@ -192,6 +195,9 @@ class TextField {
     inner.style.fontStyle     = s.italic ? 'italic' : 'normal';
     inner.style.textAlign     = s.align;
     inner.style.color         = s.fgColor;
+
+    // Blur (defocus) effect
+    inner.style.filter = s.blur > 0 ? `blur(${s.blur}px)` : '';
 
     // Text outline using -webkit-text-stroke
     if (s.outlineWidth > 0) {
@@ -517,6 +523,7 @@ function loadFieldStyle(tf) {
   ctrlOutlineColor.value          = s.outlineColor;
   ctrlOutlineWidth.value          = s.outlineWidth;
   ctrlOutlineWidthVal.textContent = s.outlineWidth;
+  ctrlBlur.value                  = s.blur ?? 0;
   alignBtns.forEach(b => b.classList.toggle('active', b.dataset.align === s.align));
   presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === tf.activePreset));
 }
@@ -558,6 +565,11 @@ ctrlItalic.addEventListener('click', () => {
   const isNowItalic = !ctrlItalic.classList.contains('active');
   ctrlItalic.classList.toggle('active', isNowItalic);
   applyControlsToSelected({ italic: isNowItalic });
+  clearPreset();
+});
+
+ctrlBlur.addEventListener('input', () => {
+  applyControlsToSelected({ blur: parseFloat(ctrlBlur.value) });
   clearPreset();
 });
 
@@ -654,19 +666,35 @@ async function exportImage() {
                s.align === 'right' ? cx + elHalfW :
                cx;
 
+    // Draw text to a temp canvas first, then composite with blur onto main.
+    // Safari supports ctx.filter for drawImage but not reliably for text primitives.
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width  = nw;
+    tempCanvas.height = nh;
+    const tc = tempCanvas.getContext('2d');
+    tc.font        = ctx.font;
+    tc.textAlign   = s.align;
+    tc.textBaseline = 'middle';
+
     lines.forEach((line, i) => {
       const ly = startY + i * lineHeight;
 
       if (s.outlineWidth > 0) {
-        ctx.lineWidth   = s.outlineWidth * scale * 2;
-        ctx.strokeStyle = s.outlineColor;
-        ctx.lineJoin    = 'round';
-        ctx.strokeText(line, lx, ly);
+        tc.lineWidth   = s.outlineWidth * scale * 2;
+        tc.strokeStyle = s.outlineColor;
+        tc.lineJoin    = 'round';
+        tc.strokeText(line, lx, ly);
       }
 
-      ctx.fillStyle = s.fgColor;
-      ctx.fillText(line, lx, ly);
+      tc.fillStyle = s.fgColor;
+      tc.fillText(line, lx, ly);
     });
+
+    if (s.blur > 0) {
+      ctx.filter = `blur(${s.blur * scale}px)`;
+    }
+    ctx.drawImage(tempCanvas, 0, 0);
+    ctx.filter = 'none';
   }
 
   const blob = await new Promise(resolve =>

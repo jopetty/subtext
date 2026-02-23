@@ -26,7 +26,11 @@
 
     <!-- Top bar -->
     <header id="top-bar">
-      <button id="back-btn" class="icon-btn" title="Start over">&#8592;</button>
+      <button id="back-btn" class="icon-btn" title="Start over">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
       <span class="wordmark-small">Subtext</span>
       <button id="export-btn" class="export-btn" title="Save image">Save</button>
     </header>
@@ -110,6 +114,10 @@
               <span id="ctrl-outline-width-val">2</span>
             </div>
             <input type="range" id="ctrl-outline-width" min="0" max="20" step="0.5" value="2" />
+          </div>
+          <div class="control-group control-group--focus">
+            <span class="control-label">Focus</span>
+            <input type="range" id="ctrl-blur" min="0" max="1" step="0.05" value="0" />
           </div>
         </div>
 
