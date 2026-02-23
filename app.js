@@ -16,7 +16,7 @@ const state = {
   lastStyle: null,       // style copied from last-edited field (for new field defaults)
   lastPreset: 'classic', // preset name of last-edited field (or null if manually edited)
   dragState: null,       // { field, startX, startY, origLeft, origTop }
-  filter: { name: 'none', intensity: 75 },
+  filter: { name: 'none', intensity: 75, params: {} },
 };
 
 // Preset styles
@@ -65,10 +65,10 @@ function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
 //   apply(data, w, h, t)  → pixel-level function used during canvas export
 const FILTERS = {
   film: {
-    label: 'Film',
+    label: '35mm',
     cssPreview: (t) =>
       `contrast(${1 + 0.1*t}) saturate(${1 - 0.22*t}) sepia(${0.28*t}) brightness(${1 - 0.1*t})`,
-    apply(data, w, h, t) {
+    apply(data, w, h, t, params) {
       const cx = w / 2, cy = h / 2;
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -97,8 +97,9 @@ const FILTERS = {
           const dx = (x - cx) / cx, dy = (y - cy) / cy;
           const vig = Math.max(0, 1 - 0.22 * t * (dx*dx + dy*dy));
           r = clamp255(r * vig); g = clamp255(g * vig); b = clamp255(b * vig);
-          // Grain
-          const noise = (Math.random() - 0.5) * 28 * t;
+          // Grain — independent param
+          const grainT = (params.grain ?? 50) / 100;
+          const noise = (Math.random() - 0.5) * 42 * grainT;
           data[i]   = clamp255(r + noise);
           data[i+1] = clamp255(g + noise * 0.92);
           data[i+2] = clamp255(b + noise * 0.80);
@@ -133,9 +134,9 @@ const FILTERS = {
     // appear only in the exported image (pixel-level apply below).
     cssPreview: (t) =>
       `saturate(${1 + 1.1*t}) hue-rotate(${-28*t}deg) contrast(${1 + 0.3*t}) brightness(${1 - 0.1*t})`,
-    apply(data, w, h, t) {
+    apply(data, w, h, t, params) {
       const orig = new Uint8ClampedArray(data);
-      const chromaShift = Math.round(5 * t); // R shifts right, B shifts left
+      const chromaShift = Math.round(8 * (params.chroma ?? 50) / 100); // independent chroma param
 
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -170,8 +171,9 @@ const FILTERS = {
           g = clamp255((g - 128) * c + 128);
           b = clamp255((b - 128) * c + 128);
 
-          // Scanlines: darken alternate rows (VHS feel)
-          const scan = (y % 2 === 0) ? 1 : Math.max(0, 1 - 0.2 * t);
+          // Scanlines — independent param
+          const scanlinesT = (params.scanlines ?? 60) / 100;
+          const scan = (y % 2 === 0) ? 1 : Math.max(0, 1 - 0.35 * scanlinesT);
           data[i]   = clamp255(r * scan);
           data[i+1] = clamp255(g * scan);
           data[i+2] = clamp255(b * scan);
@@ -212,6 +214,12 @@ const FILTERS = {
       }
     },
   },
+};
+
+// Default values for vibe-specific extra params
+const FILTER_PARAM_DEFAULTS = {
+  film:      { grain: 50 },
+  vaporwave: { scanlines: 60, chroma: 50 },
 };
 
 function defaultStyle() {
@@ -277,12 +285,14 @@ function showUpload() {
   uploadScreen.classList.add('active');
   deselectAll();
   // Reset filter
-  state.filter = { name: 'none', intensity: 75 };
+  state.filter = { name: 'none', intensity: 75, params: {} };
   baseImage.style.filter = '';
   if (grainEl) grainEl.style.display = 'none';
   if (scanlineEl) scanlineEl.style.display = 'none';
   filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
   filterIntensityRow.classList.add('hidden');
+  filterFilmControls.classList.add('hidden');
+  filterVaporControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
 }
 
@@ -805,9 +815,14 @@ ctrlBlur.addEventListener('input', () => {
 
 // ─── Image filter controls ─────────────────────────────────────────────────────
 
-const filterChips        = document.querySelectorAll('.filter-chip');
-const filterIntensityRow = document.getElementById('filter-intensity-row');
-const ctrlFilterIntensity = document.getElementById('ctrl-filter-intensity');
+const filterChips          = document.querySelectorAll('.filter-chip');
+const filterIntensityRow   = document.getElementById('filter-intensity-row');
+const ctrlFilterIntensity  = document.getElementById('ctrl-filter-intensity');
+const filterFilmControls   = document.getElementById('filter-film-controls');
+const filterVaporControls  = document.getElementById('filter-vaporwave-controls');
+const ctrlGrain            = document.getElementById('ctrl-grain');
+const ctrlScanlines        = document.getElementById('ctrl-scanlines');
+const ctrlChroma           = document.getElementById('ctrl-chroma');
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
 // Film: random grain canvas  (mix-blend-mode: overlay)
@@ -833,13 +848,13 @@ function updateGrainOverlay() {
     grainEl = makeOverlayCanvas();
     grainEl.style.mixBlendMode = 'overlay';
   }
-  const t = state.filter.intensity / 100;
+  const grainT = (state.filter.params.grain ?? 50) / 100;
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
   grainEl.width         = w;
   grainEl.height        = h;
   grainEl.style.display = '';
-  grainEl.style.opacity = (0.28 * t).toFixed(3);
+  grainEl.style.opacity = (0.35 * grainT).toFixed(3);
   const gc = grainEl.getContext('2d');
   const id = gc.createImageData(w, h);
   const d  = id.data;
@@ -856,7 +871,7 @@ function updateScanlineOverlay() {
     return;
   }
   if (!scanlineEl) scanlineEl = makeOverlayCanvas();
-  const t = state.filter.intensity / 100;
+  const scanlinesT = (state.filter.params.scanlines ?? 60) / 100;
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
   scanlineEl.width         = w;
@@ -864,7 +879,7 @@ function updateScanlineOverlay() {
   scanlineEl.style.display = '';
   const sc = scanlineEl.getContext('2d');
   sc.clearRect(0, 0, w, h);
-  sc.fillStyle = `rgba(0,0,0,${(0.2 * t).toFixed(3)})`;
+  sc.fillStyle = `rgba(0,0,0,${(0.35 * scanlinesT).toFixed(3)})`;
   for (let y = 0; y < h; y += 2) sc.fillRect(0, y, w, 1);
 }
 
@@ -879,18 +894,50 @@ function applyImageFilter() {
   updateScanlineOverlay();
 }
 
+function updateVibeExtraControls() {
+  const name = state.filter.name;
+  const isNone = name === 'none';
+  filterIntensityRow.classList.toggle('hidden', isNone);
+  filterFilmControls.classList.toggle('hidden', name !== 'film');
+  filterVaporControls.classList.toggle('hidden', name !== 'vaporwave');
+}
+
 filterChips.forEach(chip => {
   chip.addEventListener('click', () => {
     filterChips.forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
     state.filter.name = chip.dataset.filter;
-    filterIntensityRow.classList.toggle('hidden', state.filter.name === 'none');
+    // Reset to defaults for this vibe
+    state.filter.params = { ...(FILTER_PARAM_DEFAULTS[state.filter.name] || {}) };
+    // Sync extra slider values to defaults
+    if (state.filter.name === 'film') {
+      ctrlGrain.value = state.filter.params.grain;
+    } else if (state.filter.name === 'vaporwave') {
+      ctrlScanlines.value = state.filter.params.scanlines;
+      ctrlChroma.value    = state.filter.params.chroma;
+    }
+    updateVibeExtraControls();
     applyImageFilter();
   });
 });
 
 ctrlFilterIntensity.addEventListener('input', () => {
   state.filter.intensity = parseInt(ctrlFilterIntensity.value);
+  applyImageFilter();
+});
+
+ctrlGrain.addEventListener('input', () => {
+  state.filter.params.grain = parseInt(ctrlGrain.value);
+  applyImageFilter();
+});
+
+ctrlScanlines.addEventListener('input', () => {
+  state.filter.params.scanlines = parseInt(ctrlScanlines.value);
+  applyImageFilter();
+});
+
+ctrlChroma.addEventListener('input', () => {
+  state.filter.params.chroma = parseInt(ctrlChroma.value);
   applyImageFilter();
 });
 
@@ -1010,7 +1057,7 @@ async function exportImage() {
   // Apply image filter (pixel-level, fully cross-browser)
   if (state.filter.name !== 'none') {
     const imgData = ctx.getImageData(0, 0, nw, nh);
-    FILTERS[state.filter.name].apply(imgData.data, nw, nh, state.filter.intensity / 100);
+    FILTERS[state.filter.name].apply(imgData.data, nw, nh, state.filter.intensity / 100, state.filter.params);
     ctx.putImageData(imgData, 0, 0);
   }
 

@@ -782,6 +782,12 @@ input[type="range"]::-moz-range-thumb {
   flex-wrap: wrap;
 }
 
+.vibe-extra-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+}
+
 .filter-chips {
   display: flex;
   gap: 0.35rem;

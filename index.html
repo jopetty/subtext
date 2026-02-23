@@ -159,7 +159,7 @@
         <div class="controls-row controls-row--filter-chips">
           <div class="filter-chips">
             <button class="filter-chip active" data-filter="none">None</button>
-            <button class="filter-chip" data-filter="film">Film</button>
+            <button class="filter-chip" data-filter="film">35mm</button>
             <button class="filter-chip" data-filter="noir">Noir</button>
             <button class="filter-chip" data-filter="vaporwave">Vaporwave</button>
             <button class="filter-chip" data-filter="solarpunk">Solarpunk</button>
@@ -167,8 +167,32 @@
         </div>
         <div id="filter-intensity-row" class="controls-row hidden">
           <div class="control-group control-group--size">
-            <span class="control-label">Strength</span>
+            <span class="control-label">Intensity</span>
             <input type="range" id="ctrl-filter-intensity" min="0" max="100" step="1" value="75" />
+          </div>
+        </div>
+
+        <!-- Film-specific controls -->
+        <div id="filter-film-controls" class="controls-row hidden">
+          <div class="control-group control-group--size">
+            <span class="control-label">Grain</span>
+            <input type="range" id="ctrl-grain" min="0" max="100" step="1" value="50" />
+          </div>
+        </div>
+
+        <!-- Vaporwave-specific controls -->
+        <div id="filter-vaporwave-controls" class="vibe-extra-controls hidden">
+          <div class="controls-row">
+            <div class="control-group control-group--size">
+              <span class="control-label">Scanlines</span>
+              <input type="range" id="ctrl-scanlines" min="0" max="100" step="1" value="60" />
+            </div>
+          </div>
+          <div class="controls-row">
+            <div class="control-group control-group--size">
+              <span class="control-label">Chroma</span>
+              <input type="range" id="ctrl-chroma" min="0" max="100" step="1" value="50" />
+            </div>
           </div>
         </div>
       </div>
