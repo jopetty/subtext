@@ -16,6 +16,7 @@ const state = {
   lastStyle: null,       // style copied from last-edited field (for new field defaults)
   lastPreset: 'classic', // preset name of last-edited field (or null if manually edited)
   dragState: null,       // { field, startX, startY, origLeft, origTop }
+  filter: { name: 'none', intensity: 75 },
 };
 
 // Preset styles
@@ -43,15 +44,173 @@ const PRESETS = {
     blur:         0,
   },
   vaporwave: {
-    font:         "'Futura', 'Century Gothic', sans-serif",
+    font:         "'Handjet', sans-serif",
     size:         5,
     weight:       '700',
-    italic:       false,
+    italic:       true,
     align:        'center',
     fgColor:      '#ff71ce',
     outlineColor: '#7b2fff',
     outlineWidth: 4,
     blur:         0,
+  },
+};
+
+// ─── Image vibes ───────────────────────────────────────────────────────────────
+
+function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+// Each vibe has:
+//   cssPreview(t)         → CSS filter string for instant live preview (t = 0–1)
+//   apply(data, w, h, t)  → pixel-level function used during canvas export
+const FILTERS = {
+  film: {
+    label: 'Film',
+    cssPreview: (t) =>
+      `contrast(${1 + 0.1*t}) saturate(${1 - 0.22*t}) sepia(${0.28*t}) brightness(${1 - 0.1*t})`,
+    apply(data, w, h, t) {
+      const cx = w / 2, cy = h / 2;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          let r = data[i], g = data[i+1], b = data[i+2];
+          // Warm tone
+          r = clamp255(r + 12 * t);
+          g = clamp255(g +  3 * t);
+          b = clamp255(b - 14 * t);
+          // Desaturation
+          const lm = 0.299*r + 0.587*g + 0.114*b;
+          const s  = 1 - 0.22 * t;
+          r = clamp255(lm + (r - lm) * s);
+          g = clamp255(lm + (g - lm) * s);
+          b = clamp255(lm + (b - lm) * s);
+          // Fade / lift blacks
+          r = clamp255(r * (1 - 0.09*t) + 20*t);
+          g = clamp255(g * (1 - 0.09*t) + 16*t);
+          b = clamp255(b * (1 - 0.09*t) + 11*t);
+          // Contrast
+          const c = 1 + 0.1 * t;
+          r = clamp255((r - 128) * c + 128);
+          g = clamp255((g - 128) * c + 128);
+          b = clamp255((b - 128) * c + 128);
+          // Vignette
+          const dx = (x - cx) / cx, dy = (y - cy) / cy;
+          const vig = Math.max(0, 1 - 0.22 * t * (dx*dx + dy*dy));
+          r = clamp255(r * vig); g = clamp255(g * vig); b = clamp255(b * vig);
+          // Grain
+          const noise = (Math.random() - 0.5) * 28 * t;
+          data[i]   = clamp255(r + noise);
+          data[i+1] = clamp255(g + noise * 0.92);
+          data[i+2] = clamp255(b + noise * 0.80);
+        }
+      }
+    },
+  },
+
+  noir: {
+    label: 'Noir',
+    cssPreview: (t) =>
+      `grayscale(${t}) contrast(${1 + 0.2*t}) brightness(${1 - 0.05*t})`,
+    apply(data, w, h, t) {
+      const cont = 1 + 0.2 * t;
+      const bright = 1 - 0.05 * t;
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+        const lm = 0.299*r + 0.587*g + 0.114*b;
+        r = clamp255(lm + (r - lm) * (1 - t));
+        g = clamp255(lm + (g - lm) * (1 - t));
+        b = clamp255(lm + (b - lm) * (1 - t));
+        data[i]   = clamp255(((r - 128) * cont + 128) * bright);
+        data[i+1] = clamp255(((g - 128) * cont + 128) * bright);
+        data[i+2] = clamp255(((b - 128) * cont + 128) * bright);
+      }
+    },
+  },
+
+  vaporwave: {
+    label: 'Vaporwave',
+    // CSS preview approximates the color grade; chromatic aberration + scanlines
+    // appear only in the exported image (pixel-level apply below).
+    cssPreview: (t) =>
+      `saturate(${1 + 1.1*t}) hue-rotate(${-28*t}deg) contrast(${1 + 0.3*t}) brightness(${1 - 0.1*t})`,
+    apply(data, w, h, t) {
+      const orig = new Uint8ClampedArray(data);
+      const chromaShift = Math.round(5 * t); // R shifts right, B shifts left
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i  = (y * w + x) * 4;
+
+          // Chromatic aberration: read R from x+shift, B from x-shift, G in-place
+          const rx  = Math.min(w - 1, x + chromaShift);
+          const bx  = Math.max(0,     x - chromaShift);
+          let r = orig[(y * w + rx) * 4];
+          let g = orig[i + 1];
+          let b = orig[(y * w + bx) * 4 + 2];
+
+          // Use centre-pixel luma for consistent color grading
+          const r0 = orig[i], g0 = orig[i+1], b0 = orig[i+2];
+          const lm = 0.299*r0 + 0.587*g0 + 0.114*b0;
+
+          // Heavy saturation boost
+          const s = 1 + 1.1 * t;
+          r = clamp255(lm + (r - lm) * s);
+          g = clamp255(lm + (g - lm) * s);
+          b = clamp255(lm + (b - lm) * s);
+
+          // Color grade: purple/magenta midtones, deep blue shadows, hot-pink highlights
+          const bright = lm / 255;
+          r = clamp255(r + (10 + bright * 30) * t);   // more red in highlights → hot pink
+          g = clamp255(g - (28 - bright * 8)  * t);   // suppress green throughout
+          b = clamp255(b + (42 - bright * 22) * t);   // strong blue in shadows, less in highlights
+
+          // Hard contrast + slight brightness pull-down
+          const c = 1 + 0.3 * t;
+          r = clamp255((r - 128) * c + 128);
+          g = clamp255((g - 128) * c + 128);
+          b = clamp255((b - 128) * c + 128);
+
+          // Scanlines: darken alternate rows (VHS feel)
+          const scan = (y % 2 === 0) ? 1 : Math.max(0, 1 - 0.2 * t);
+          data[i]   = clamp255(r * scan);
+          data[i+1] = clamp255(g * scan);
+          data[i+2] = clamp255(b * scan);
+        }
+      }
+    },
+  },
+
+  solarpunk: {
+    label: 'Solarpunk',
+    cssPreview: (t) =>
+      `saturate(${1 + 0.7*t}) hue-rotate(${10*t}deg) brightness(${1 + 0.16*t}) contrast(${1 - 0.05*t})`,
+    apply(data, w, h, t) {
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+        const lm = 0.299*r + 0.587*g + 0.114*b;
+        const bright = lm / 255;
+
+        // Saturation boost — greens and golds really pop
+        const s = 1 + 0.7 * t;
+        r = clamp255(lm + (r - lm) * s);
+        g = clamp255(lm + (g - lm) * s);
+        b = clamp255(lm + (b - lm) * s);
+
+        // Split-tone: teal shadows → green midtones → amber-gold highlights
+        const shadowW    = Math.max(0, 1 - bright * 2.5);
+        const highlightW = Math.max(0, bright * 2.5 - 1.5);
+        const midW       = Math.max(0, 1 - shadowW - highlightW);
+
+        r = clamp255(r + t * (shadowW * -10 + midW *  3 + highlightW * 24));
+        g = clamp255(g + t * (shadowW *   6 + midW * 13 + highlightW * 14));
+        b = clamp255(b + t * (shadowW *  15 + midW * -6 + highlightW * -22));
+
+        // Luminous brightness lift — greens get extra push for lushness
+        data[i]   = clamp255(r * (1 + 0.13 * t));
+        data[i+1] = clamp255(g * (1 + 0.18 * t));
+        data[i+2] = clamp255(b * (1 + 0.04 * t));
+      }
+    },
   },
 };
 
@@ -73,7 +232,6 @@ const exportCanvas   = document.getElementById('export-canvas');
 // True on phones/tablets — used to gate the single-tap-to-select behaviour.
 const isMobile = navigator.maxTouchPoints > 0;
 
-const noSelectionHint = document.getElementById('no-selection-hint');
 const fontControls   = document.getElementById('font-controls');
 
 const ctrlFont         = document.getElementById('ctrl-font');
@@ -118,10 +276,44 @@ function showUpload() {
   editorScreen.classList.remove('active');
   uploadScreen.classList.add('active');
   deselectAll();
+  // Reset filter
+  state.filter = { name: 'none', intensity: 75 };
+  baseImage.style.filter = '';
+  if (grainEl) grainEl.style.display = 'none';
+  if (scanlineEl) scanlineEl.style.display = 'none';
+  filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
+  filterIntensityRow.classList.add('hidden');
+  ctrlFilterIntensity.value = 75;
 }
 
 fileInput.addEventListener('change', (e) => {
   loadImageFile(e.target.files[0]);
+});
+
+// Drag-and-drop onto the upload screen
+let dragEnterCount = 0;
+
+uploadScreen.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  dragEnterCount++;
+  uploadScreen.classList.add('drag-over');
+});
+
+uploadScreen.addEventListener('dragleave', () => {
+  dragEnterCount--;
+  if (dragEnterCount === 0) uploadScreen.classList.remove('drag-over');
+});
+
+uploadScreen.addEventListener('dragover', (e) => {
+  e.preventDefault(); // required to allow drop
+});
+
+uploadScreen.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragEnterCount = 0;
+  uploadScreen.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  loadImageFile(file);
 });
 
 // Paste from clipboard
@@ -165,12 +357,12 @@ class TextField {
 
     const del = document.createElement('div');
     del.className = 'text-field-delete';
-    del.innerHTML = '&times;';
+    del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>';
     del.title = 'Delete';
 
     const drag = document.createElement('div');
     drag.className = 'text-field-drag';
-    drag.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 1v12M1 7h12M7 1L5 3M7 1l2 2M7 13l-2-2M7 13l2-2M1 7l2-2M1 7l2 2M13 7l-2-2M13 7l-2 2"/></svg>';
+    drag.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor" aria-hidden="true"><path d="M360-160q-33 0-56.5-23.5T280-240q0-33 23.5-56.5T360-320q33 0 56.5 23.5T440-240q0 33-23.5 56.5T360-160Zm240 0q-33 0-56.5-23.5T520-240q0-33 23.5-56.5T600-320q33 0 56.5 23.5T680-240q0 33-23.5 56.5T600-160ZM360-400q-33 0-56.5-23.5T280-480q0-33 23.5-56.5T360-560q33 0 56.5 23.5T440-480q0 33-23.5 56.5T360-400Zm240 0q-33 0-56.5-23.5T520-480q0-33 23.5-56.5T600-560q33 0 56.5 23.5T680-480q0 33-23.5 56.5T600-400ZM360-640q-33 0-56.5-23.5T280-720q0-33 23.5-56.5T360-800q33 0 56.5 23.5T440-720q0 33-23.5 56.5T360-640Zm240 0q-33 0-56.5-23.5T520-720q0-33 23.5-56.5T600-800q33 0 56.5 23.5T680-720q0 33-23.5 56.5T600-640Z"/></svg>';
     drag.title = 'Move';
 
     const inner = document.createElement('div');
@@ -533,15 +725,11 @@ function startDrag(e, tf) {
 
 // ─── Panel / controls ─────────────────────────────────────────────────────────
 
-function updatePanel() {
-  const hasSel = !!state.selectedField;
-  noSelectionHint.classList.toggle('hidden', hasSel);
-  fontControls.classList.toggle('hidden', !hasSel);
-}
+function updatePanel() {}
 
-function loadFieldStyle(tf) {
-  const s = tf.style;
+function syncControlsToStyle(s, activePreset) {
   ctrlFont.value                  = s.font;
+  syncFontSelectDisplay();
   ctrlSize.value                  = s.size;
   ctrlSizeVal.textContent         = s.size + '%';
   ctrlBold.classList.toggle('active', parseInt(s.weight) >= 700);
@@ -552,11 +740,21 @@ function loadFieldStyle(tf) {
   ctrlOutlineWidthVal.textContent = s.outlineWidth;
   ctrlBlur.value                  = s.blur ?? 0;
   alignBtns.forEach(b => b.classList.toggle('active', b.dataset.align === s.align));
-  presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === tf.activePreset));
+  presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === activePreset));
+}
+
+function loadFieldStyle(tf) {
+  syncControlsToStyle(tf.style, tf.activePreset);
 }
 
 function applyControlsToSelected(patch) {
-  if (!state.selectedField) return;
+  if (!state.selectedField) {
+    // No field selected — accumulate changes into lastStyle so the next
+    // new field picks them up instead of reverting to Classic defaults.
+    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0 };
+    state.lastStyle = { ...base, ...patch };
+    return;
+  }
   state.selectedField.updateStyle(patch);
   state.lastStyle = { ...state.selectedField.style };
 }
@@ -569,8 +767,13 @@ function clearPreset() {
 }
 
 // Control listeners
+function syncFontSelectDisplay() {
+  ctrlFont.style.fontFamily = ctrlFont.value;
+}
+
 ctrlFont.addEventListener('change', () => {
   applyControlsToSelected({ font: ctrlFont.value });
+  syncFontSelectDisplay();
   clearPreset();
 });
 
@@ -598,6 +801,97 @@ ctrlItalic.addEventListener('click', () => {
 ctrlBlur.addEventListener('input', () => {
   applyControlsToSelected({ blur: parseFloat(ctrlBlur.value) });
   clearPreset();
+});
+
+// ─── Image filter controls ─────────────────────────────────────────────────────
+
+const filterChips        = document.querySelectorAll('.filter-chip');
+const filterIntensityRow = document.getElementById('filter-intensity-row');
+const ctrlFilterIntensity = document.getElementById('ctrl-filter-intensity');
+
+// ── Vibe preview overlays ──────────────────────────────────────────────────────
+// Film: random grain canvas  (mix-blend-mode: overlay)
+// Vaporwave: scanline canvas (semi-transparent dark rows)
+// These effects can't be replicated with CSS filters alone.
+
+let grainEl    = null;
+let scanlineEl = null;
+
+function makeOverlayCanvas() {
+  const el = document.createElement('canvas');
+  el.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+  baseImage.insertAdjacentElement('afterend', el);
+  return el;
+}
+
+function updateGrainOverlay() {
+  if (state.filter.name !== 'film') {
+    if (grainEl) grainEl.style.display = 'none';
+    return;
+  }
+  if (!grainEl) {
+    grainEl = makeOverlayCanvas();
+    grainEl.style.mixBlendMode = 'overlay';
+  }
+  const t = state.filter.intensity / 100;
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  grainEl.width         = w;
+  grainEl.height        = h;
+  grainEl.style.display = '';
+  grainEl.style.opacity = (0.28 * t).toFixed(3);
+  const gc = grainEl.getContext('2d');
+  const id = gc.createImageData(w, h);
+  const d  = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = (Math.random() * 255) | 0;
+    d[i] = d[i+1] = d[i+2] = v; d[i+3] = 255;
+  }
+  gc.putImageData(id, 0, 0);
+}
+
+function updateScanlineOverlay() {
+  if (state.filter.name !== 'vaporwave') {
+    if (scanlineEl) scanlineEl.style.display = 'none';
+    return;
+  }
+  if (!scanlineEl) scanlineEl = makeOverlayCanvas();
+  const t = state.filter.intensity / 100;
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  scanlineEl.width         = w;
+  scanlineEl.height        = h;
+  scanlineEl.style.display = '';
+  const sc = scanlineEl.getContext('2d');
+  sc.clearRect(0, 0, w, h);
+  sc.fillStyle = `rgba(0,0,0,${(0.2 * t).toFixed(3)})`;
+  for (let y = 0; y < h; y += 2) sc.fillRect(0, y, w, 1);
+}
+
+function applyImageFilter() {
+  if (state.filter.name === 'none') {
+    baseImage.style.filter = '';
+  } else {
+    const t = state.filter.intensity / 100;
+    baseImage.style.filter = FILTERS[state.filter.name].cssPreview(t);
+  }
+  updateGrainOverlay();
+  updateScanlineOverlay();
+}
+
+filterChips.forEach(chip => {
+  chip.addEventListener('click', () => {
+    filterChips.forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.filter.name = chip.dataset.filter;
+    filterIntensityRow.classList.toggle('hidden', state.filter.name === 'none');
+    applyImageFilter();
+  });
+});
+
+ctrlFilterIntensity.addEventListener('input', () => {
+  state.filter.intensity = parseInt(ctrlFilterIntensity.value);
+  applyImageFilter();
 });
 
 ctrlFgColor.addEventListener('input', () => {
@@ -632,10 +926,12 @@ presetBtns.forEach(btn => {
     // Preserve the current font size — only swap style attributes
     const { size: _ignored, ...presetWithoutSize } = preset;
     applyControlsToSelected(presetWithoutSize);
+    state.lastPreset = btn.dataset.preset;
     if (state.selectedField) {
       state.selectedField.activePreset = btn.dataset.preset;
-      state.lastPreset = btn.dataset.preset;
       loadFieldStyle(state.selectedField);
+    } else {
+      syncControlsToStyle(state.lastStyle, btn.dataset.preset);
     }
   });
 });
@@ -710,6 +1006,13 @@ async function exportImage() {
 
   // Draw base image
   ctx.drawImage(img, 0, 0, nw, nh);
+
+  // Apply image filter (pixel-level, fully cross-browser)
+  if (state.filter.name !== 'none') {
+    const imgData = ctx.getImageData(0, 0, nw, nh);
+    FILTERS[state.filter.name].apply(imgData.data, nw, nh, state.filter.intensity / 100);
+    ctx.putImageData(imgData, 0, 0);
+  }
 
   // Draw each text field
   const containerRect = canvasContainer.getBoundingClientRect();
@@ -863,6 +1166,7 @@ function showIOSSaveOverlay(blob) {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 initGuides();
+syncFontSelectDisplay();
 
 // ─── Window resize: reposition all fields ────────────────────────────────────
 

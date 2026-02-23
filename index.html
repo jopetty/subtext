@@ -17,7 +17,7 @@
         Choose an Image
         <input type="file" id="file-input" accept="image/*" />
       </label>
-      <p class="upload-hint">or paste an image from your clipboard</p>
+      <p class="upload-hint">or drag &amp; drop &middot; paste from clipboard</p>
     </div>
   </div>
 
@@ -27,8 +27,8 @@
     <!-- Top bar -->
     <header id="top-bar">
       <button id="back-btn" class="icon-btn" title="Start over">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="15 18 9 12 15 6"/>
+        <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor" aria-hidden="true">
+          <path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"/>
         </svg>
       </button>
       <span class="wordmark-small">Subtext</span>
@@ -45,13 +45,15 @@
 
     <!-- Bottom panel: font controls -->
     <div id="bottom-panel">
-      <div id="no-selection-hint">Double-click image to add text</div>
+      <div id="font-controls">
 
-      <div id="font-controls" class="hidden">
+        <!-- Section heading -->
+        <div class="section-heading-row">
+          <span class="control-label section-heading">Typography</span>
+        </div>
 
-        <!-- Presets — always first -->
+        <!-- Presets -->
         <div class="controls-row controls-row--presets">
-          <span class="control-label">Presets</span>
           <div class="preset-pills">
             <button class="preset-btn active" data-preset="classic">Classic</button>
             <button class="preset-btn" data-preset="cinema">Cin&eacute;ma</button>
@@ -64,17 +66,29 @@
           <span class="control-label">Typeface</span>
           <div class="typeface-row">
             <select id="ctrl-font">
-              <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
-              <option value="Georgia, 'Times New Roman', serif">Georgia</option>
-              <option value="'Palatino Linotype', Palatino, serif">Palatino</option>
-              <option value="'Garamond', 'EB Garamond', 'GaramondIO', serif">Garamond</option>
-              <option value="'Baskerville', 'Libre Baskerville', serif">Baskerville</option>
-              <option value="'Futura', 'Century Gothic', sans-serif">Futura</option>
-              <option value="'Gill Sans', 'Gill Sans MT', sans-serif">Gill Sans</option>
-              <option value="'Courier New', Courier, monospace">Courier</option>
+              <option value="'Helvetica Neue', Helvetica, sans-serif"        style="font-family:'Helvetica Neue',Helvetica,sans-serif">Helvetica</option>
+              <option value="Georgia, 'Times New Roman', serif"              style="font-family:Georgia,'Times New Roman',serif">Georgia</option>
+              <option value="'Palatino Linotype', Palatino, serif"           style="font-family:'Palatino Linotype',Palatino,serif">Palatino</option>
+              <option value="'Garamond', 'EB Garamond', 'GaramondIO', serif" style="font-family:'GaramondIO','EB Garamond',Garamond,serif">Garamond</option>
+              <option value="'Baskerville', 'Libre Baskerville', serif"      style="font-family:Baskerville,'Libre Baskerville',serif">Baskerville</option>
+              <option value="'Futura', 'Century Gothic', sans-serif"         style="font-family:Futura,'Century Gothic',sans-serif">Futura</option>
+              <option value="'Gill Sans', 'Gill Sans MT', sans-serif"        style="font-family:'Gill Sans','Gill Sans MT',sans-serif">Gill Sans</option>
+              <option value="'Courier New', Courier, monospace"              style="font-family:'Courier New',Courier,monospace">Courier</option>
+              <option value="'CoralPixels', sans-serif"                      style="font-family:'CoralPixels',sans-serif">Coral Pixels</option>
+              <option value="'Handjet', sans-serif"                          style="font-family:'Handjet',sans-serif">Handjet</option>
+              <option value="'PressStart2P', monospace"                      style="font-family:'PressStart2P',monospace">Press Start 2P</option>
+              <option value="'Silkscreen', monospace"                        style="font-family:'Silkscreen',monospace">Silkscreen</option>
             </select>
-            <button id="ctrl-bold" class="style-btn" title="Bold">B</button>
-            <button id="ctrl-italic" class="style-btn" title="Italic">I</button>
+            <button id="ctrl-bold" class="style-btn" title="Bold">
+              <svg xmlns="http://www.w3.org/2000/svg" height="17px" viewBox="0 -960 960 960" width="17px" fill="currentColor" aria-hidden="true">
+                <path d="M272-200v-560h221q65 0 120 40t55 111q0 51-23 78.5T602-491q25 11 55.5 41t30.5 90q0 89-65 124.5T501-200H272Zm121-112h104q48 0 58.5-24.5T566-372q0-11-10.5-35.5T494-432H393v120Zm0-228h93q33 0 48-17t15-38q0-24-17-39t-44-15h-95v109Z"/>
+              </svg>
+            </button>
+            <button id="ctrl-italic" class="style-btn" title="Italic">
+              <svg xmlns="http://www.w3.org/2000/svg" height="17px" viewBox="0 -960 960 960" width="17px" fill="currentColor" aria-hidden="true">
+                <path d="M200-200v-100h160l120-360H320v-100h400v100H580L460-300h140v100H200Z"/>
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -88,11 +102,23 @@
             <input type="range" id="ctrl-size" min="1" max="25" step="0.5" value="5" />
           </div>
           <div class="control-group control-group--align">
-            <span class="control-label">Align</span>
+            <span class="control-label">Alignment</span>
             <div class="btn-group">
-              <button data-align="left"  class="align-btn" title="Left">&#8676;</button>
-              <button data-align="center" class="align-btn active" title="Center">&#8596;</button>
-              <button data-align="right"  class="align-btn" title="Right">&#8677;</button>
+              <button data-align="left" class="align-btn" title="Left">
+                <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor" aria-hidden="true">
+                  <path d="M80-80v-800h80v800H80Zm160-200v-120h400v120H240Zm0-280v-120h640v120H240Z"/>
+                </svg>
+              </button>
+              <button data-align="center" class="align-btn active" title="Center">
+                <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor" aria-hidden="true">
+                  <path d="M440-80v-200H240v-120h200v-160H120v-120h320v-200h80v200h320v120H520v160h200v120H520v200h-80Z"/>
+                </svg>
+              </button>
+              <button data-align="right" class="align-btn" title="Right">
+                <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor" aria-hidden="true">
+                  <path d="M800-80v-800h80v800h-80ZM320-280v-120h400v120H320ZM80-560v-120h640v120H80Z"/>
+                </svg>
+              </button>
             </div>
           </div>
         </div>
@@ -123,6 +149,30 @@
         </div>
 
       </div>
+
+      <!-- Vibe section — desktop sidebar only -->
+      <div id="filter-section">
+        <div class="section-divider"></div>
+        <div class="section-heading-row">
+          <span class="control-label section-heading">Vibe</span>
+        </div>
+        <div class="controls-row controls-row--filter-chips">
+          <div class="filter-chips">
+            <button class="filter-chip active" data-filter="none">None</button>
+            <button class="filter-chip" data-filter="film">Film</button>
+            <button class="filter-chip" data-filter="noir">Noir</button>
+            <button class="filter-chip" data-filter="vaporwave">Vaporwave</button>
+            <button class="filter-chip" data-filter="solarpunk">Solarpunk</button>
+          </div>
+        </div>
+        <div id="filter-intensity-row" class="controls-row hidden">
+          <div class="control-group control-group--size">
+            <span class="control-label">Strength</span>
+            <input type="range" id="ctrl-filter-intensity" min="0" max="100" step="1" value="75" />
+          </div>
+        </div>
+      </div>
+
     </div>
 
   </div>
