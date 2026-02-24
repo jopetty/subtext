@@ -144,6 +144,23 @@
   font-display: swap;
 }
 
+/* ── Nunito variable font ── */
+@font-face {
+  font-family: 'Nunito';
+  src: url('fonts/nunito.woff2') format('woff2');
+  font-weight: 200 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('fonts/nunito-italic.woff2') format('woff2');
+  font-weight: 200 1000;
+  font-style: italic;
+  font-display: swap;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -178,6 +195,7 @@
   --font-handjet: 'Handjet', sans-serif;
   --font-press-start: 'PressStart2P', monospace;
   --font-silkscreen: 'Silkscreen', monospace;
+  --font-nunito: 'Nunito', 'Saira', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
 }
 
 @media (max-width: 769px) {
@@ -1360,6 +1378,10 @@ input[type="range"]::-moz-range-thumb {
     max-height: none;
   }
 
+  #bottom-panel[data-panel="typography"] {
+    overflow: visible;
+  }
+
   /* When the Vibe tab is active, hide Typography and show Vibe */
   #bottom-panel[data-panel="vibe"] #font-controls {
     display: none;
@@ -1368,9 +1390,9 @@ input[type="range"]::-moz-range-thumb {
   #bottom-panel[data-panel="vibe"] #filter-section {
     display: flex;
     flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+    flex: none;
+    min-height: auto;
+    overflow: hidden;
     gap: 0.45rem;
     padding-top: 0.4rem;
   }
@@ -1405,7 +1427,15 @@ input[type="range"]::-moz-range-thumb {
   #bottom-panel {
     padding-top: 0.2rem;
     padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-    overflow: hidden;
+    overflow-x: visible;
+    overflow-y: hidden;
+  }
+
+  .font-select-menu {
+    top: auto;
+    bottom: calc(100% + 6px);
+    max-height: min(40vh, 240px);
+    z-index: 320;
   }
 
   #panel-tabs {
@@ -1432,12 +1462,16 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .preset-pills {
+    width: calc(100% + 1.7rem);
+    max-width: none;
+    margin-left: -0.85rem;
+    margin-right: -0.85rem;
+    padding: 0 0.85rem;
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    width: 100%;
   }
 
   .preset-pills::-webkit-scrollbar {
@@ -1453,12 +1487,16 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .filter-chips {
+    width: calc(100% + 1.7rem);
+    max-width: none;
+    margin-left: -0.85rem;
+    margin-right: -0.85rem;
+    padding: 0 0.85rem;
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    width: 100%;
   }
 
   .filter-chips::-webkit-scrollbar {
