@@ -994,10 +994,11 @@ class TextField {
     const inner = document.createElement('div');
     inner.className = 'text-field-inner';
     inner.contentEditable = 'true';
-    // Keep iOS/macOS text substitutions enabled (smart quotes, autocorrect).
-    inner.spellcheck = true;
-    inner.setAttribute('autocorrect', 'on');
-    inner.setAttribute('autocapitalize', 'sentences');
+    // Keep text rendering stable for outlined text fields.
+    inner.spellcheck = false;
+    inner.setAttribute('autocorrect', 'off');
+    inner.setAttribute('autocapitalize', 'off');
+    inner.setAttribute('autocomplete', 'off');
     inner.setAttribute('data-placeholder', 'Caption…');
     inner.textContent = this.text;
 
