@@ -80,7 +80,7 @@ const FILTERS = {
   film: {
     label: '35mm',
     cssPreview: (t) =>
-      `contrast(${1 + 0.1*t}) saturate(${1 - 0.22*t}) sepia(${0.28*t}) brightness(${1 - 0.1*t})`,
+      `contrast(${1 + 0.02*t}) saturate(${1 + 0.06*t}) sepia(${0.08*t}) brightness(${1 + 0.2*t})`,
     apply(data, w, h, t, params) {
       const cx = w / 2, cy = h / 2;
       for (let y = 0; y < h; y++) {
@@ -88,31 +88,31 @@ const FILTERS = {
           const i = (y * w + x) * 4;
           let r = data[i], g = data[i+1], b = data[i+2];
           // Warm tone
-          r = clamp255(r + 12 * t);
-          g = clamp255(g +  3 * t);
-          b = clamp255(b - 14 * t);
-          // Desaturation
+          r = clamp255(r + 9 * t);
+          g = clamp255(g + 3 * t);
+          b = clamp255(b - 8 * t);
+          // Gentle saturation bump for a pastel, airy stock look
           const lm = 0.299*r + 0.587*g + 0.114*b;
-          const s  = 1 - 0.22 * t;
+          const s  = 1 + 0.05 * t;
           r = clamp255(lm + (r - lm) * s);
           g = clamp255(lm + (g - lm) * s);
           b = clamp255(lm + (b - lm) * s);
-          // Fade / lift blacks
-          r = clamp255(r * (1 - 0.09*t) + 20*t);
-          g = clamp255(g * (1 - 0.09*t) + 16*t);
-          b = clamp255(b * (1 - 0.09*t) + 11*t);
-          // Contrast
-          const c = 1 + 0.1 * t;
+          // Lift midtones and shadows for a bright, airy base
+          r = clamp255(r * (1 - 0.03*t) + 24*t);
+          g = clamp255(g * (1 - 0.03*t) + 22*t);
+          b = clamp255(b * (1 - 0.03*t) + 20*t);
+          // Very gentle contrast keeps tones soft
+          const c = 1 + 0.02 * t;
           r = clamp255((r - 128) * c + 128);
           g = clamp255((g - 128) * c + 128);
           b = clamp255((b - 128) * c + 128);
-          // Vignette
+          // Keep vignette subtle so the frame stays bright
           const dx = (x - cx) / cx, dy = (y - cy) / cy;
-          const vig = Math.max(0, 1 - 0.22 * t * (dx*dx + dy*dy));
+          const vig = Math.max(0, 1 - 0.08 * t * (dx*dx + dy*dy));
           r = clamp255(r * vig); g = clamp255(g * vig); b = clamp255(b * vig);
           // Grain — independent param
-          const grainT = (params.grain ?? 50) / 100;
-          const noise = (Math.random() - 0.5) * 42 * grainT;
+          const grainT = (params.grain ?? 10) / 100;
+          const noise = (Math.random() - 0.5) * 28 * grainT;
           data[i]   = clamp255(r + noise);
           data[i+1] = clamp255(g + noise * 0.92);
           data[i+2] = clamp255(b + noise * 0.80);
@@ -254,9 +254,14 @@ const FILTERS = {
 
   solarpunk: {
     label: 'Solarpunk',
-    cssPreview: (t) =>
-      `saturate(${1 + 0.7*t}) hue-rotate(${10*t}deg) brightness(${1 + 0.16*t}) contrast(${1 - 0.05*t})`,
-    apply(data, w, h, t) {
+    cssPreview: (t, params = {}) => {
+      const bloomT = (params.bloom ?? 35) / 100;
+      const hazeT  = (params.haze  ?? 25) / 100;
+      return `saturate(${1 + 0.7*t - 0.08*hazeT*t}) hue-rotate(${10*t}deg) brightness(${1 + 0.16*t + 0.16*hazeT*t + 0.1*bloomT*t}) contrast(${1 - (0.05*t + 0.2*hazeT*t)})`;
+    },
+    apply(data, w, h, t, params = {}) {
+      const bloomT = (params.bloom ?? 35) / 100;
+      const hazeT  = (params.haze  ?? 25) / 100;
       for (let i = 0; i < data.length; i += 4) {
         let r = data[i], g = data[i+1], b = data[i+2];
         const lm = 0.299*r + 0.587*g + 0.114*b;
@@ -277,6 +282,21 @@ const FILTERS = {
         g = clamp255(g + t * (shadowW *   6 + midW * 13 + highlightW * 14));
         b = clamp255(b + t * (shadowW *  15 + midW * -6 + highlightW * -22));
 
+        // Bloom: push highlights toward sunlit warmth.
+        const glow = Math.max(0, (bright - 0.55) / 0.45);
+        const bloom = glow * glow * bloomT * t;
+        r = clamp255(r + 34 * bloom);
+        g = clamp255(g + 26 * bloom);
+        b = clamp255(b + 11 * bloom);
+
+        // Haze: softened contrast with atmospheric lift.
+        const hazeMix = 0.34 * hazeT * t;
+        const hazeSat = 1 - 0.18 * hazeT * t;
+        const hlm = 0.299*r + 0.587*g + 0.114*b;
+        r = clamp255((hlm + (r - hlm) * hazeSat) * (1 - hazeMix) + 228 * hazeMix);
+        g = clamp255((hlm + (g - hlm) * hazeSat) * (1 - hazeMix) + 232 * hazeMix);
+        b = clamp255((hlm + (b - hlm) * hazeSat) * (1 - hazeMix) + 236 * hazeMix);
+
         // Luminous brightness lift — greens get extra push for lushness
         data[i]   = clamp255(r * (1 + 0.13 * t));
         data[i+1] = clamp255(g * (1 + 0.18 * t));
@@ -288,9 +308,10 @@ const FILTERS = {
 
 // Default values for vibe-specific extra params
 const FILTER_PARAM_DEFAULTS = {
-  film:        { grain: 50 },
+  film:        { grain: 10 },
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
   darkAcademia: { grain: 45, vignette: 65 },
+  solarpunk:   { bloom: 35, haze: 25 },
 };
 
 function defaultStyle() {
@@ -318,6 +339,10 @@ const bottomPanel    = document.getElementById('bottom-panel');
 const panelTabBtns   = document.querySelectorAll('.panel-tab');
 
 const ctrlFont         = document.getElementById('ctrl-font');
+const ctrlFontWrap     = document.getElementById('ctrl-font-wrap');
+const ctrlFontTrigger  = document.getElementById('ctrl-font-trigger');
+const ctrlFontLabel    = document.getElementById('ctrl-font-label');
+const ctrlFontMenu     = document.getElementById('ctrl-font-menu');
 const ctrlSize         = document.getElementById('ctrl-size');
 const ctrlSizeVal      = document.getElementById('ctrl-size-val');
 const ctrlBold         = document.getElementById('ctrl-bold');
@@ -349,6 +374,17 @@ function isLikelyImageFile(file) {
   const type = (file.type || '').toLowerCase();
   const name = file.name || '';
   return type.startsWith('image/') || IMAGE_EXT_RE.test(name);
+}
+
+function extractFirstImageFile(transfer) {
+  let file = transfer?.files?.[0] || null;
+  if (file && isLikelyImageFile(file)) return file;
+  if (!transfer?.items) return null;
+  for (const item of transfer.items) {
+    const candidate = item.getAsFile?.();
+    if (candidate && isLikelyImageFile(candidate)) return candidate;
+  }
+  return null;
 }
 
 function setUploadBusy(isBusy, message = 'Loading image...') {
@@ -545,7 +581,11 @@ function fitImageToWrapper() {
 
 function showEditor() {
   uploadScreen.classList.remove('active');
+  uploadScreen.classList.remove('drag-over');
+  dragEnterCount = 0;
   editorScreen.classList.add('active');
+  editorScreen.classList.remove('drag-over');
+  editorDragEnterCount = 0;
   setThemeColors('editor');
   // Clear any leftover fields
   state.textFields.forEach(tf => tf.el.remove());
@@ -567,7 +607,11 @@ function showEditor() {
 
 function showUpload() {
   editorScreen.classList.remove('active');
+  editorScreen.classList.remove('drag-over');
+  editorDragEnterCount = 0;
   uploadScreen.classList.add('active');
+  uploadScreen.classList.remove('drag-over');
+  dragEnterCount = 0;
   setThemeColors('upload');
   baseImage.style.width  = '';
   baseImage.style.height = '';
@@ -580,12 +624,14 @@ function showUpload() {
   if (scanlineEl) scanlineEl.style.display = 'none';
   if (chromaEl) chromaEl.style.display = 'none';
   if (vignetteEl) vignetteEl.style.display = 'none';
+  if (solarpunkEl) solarpunkEl.style.display = 'none';
   filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
   filterIntensityRow.classList.add('hidden');
   filterLayerRow.classList.add('hidden');
   filterFilmControls.classList.add('hidden');
   filterVaporControls.classList.add('hidden');
   filterDarkAcadControls.classList.add('hidden');
+  filterSolarpunkControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
   ctrlFilterOnTop.checked = false;
   if (_filterRenderRaf) {
@@ -628,31 +674,46 @@ uploadScreen.addEventListener('drop', (e) => {
   }
   dragEnterCount = 0;
   uploadScreen.classList.remove('drag-over');
-  let file = e.dataTransfer?.files?.[0] || null;
-  if (!file && e.dataTransfer?.items) {
-    for (const item of e.dataTransfer.items) {
-      const candidate = item.getAsFile?.();
-      if (candidate && isLikelyImageFile(candidate)) {
-        file = candidate;
-        break;
-      }
-    }
+  const file = extractFirstImageFile(e.dataTransfer);
+  loadImageFile(file);
+});
+
+// Drag-and-drop onto the editor to replace current image and reset session.
+let editorDragEnterCount = 0;
+
+editorScreen.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  if (state.uploadBusy || !state.imageLoaded) return;
+  editorDragEnterCount++;
+  editorScreen.classList.add('drag-over');
+});
+
+editorScreen.addEventListener('dragleave', () => {
+  editorDragEnterCount--;
+  if (editorDragEnterCount <= 0) {
+    editorDragEnterCount = 0;
+    editorScreen.classList.remove('drag-over');
   }
+});
+
+editorScreen.addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+
+editorScreen.addEventListener('drop', (e) => {
+  e.preventDefault();
+  editorDragEnterCount = 0;
+  editorScreen.classList.remove('drag-over');
+  if (state.uploadBusy || !state.imageLoaded) return;
+  const file = extractFirstImageFile(e.dataTransfer);
   loadImageFile(file);
 });
 
 // Paste from clipboard
 window.addEventListener('paste', (e) => {
   if (state.uploadBusy) return;
-  const items = e.clipboardData?.items;
-  if (!items) return;
-  for (const item of items) {
-    const candidate = item.getAsFile?.();
-    if (candidate && isLikelyImageFile(candidate)) {
-      loadImageFile(candidate);
-      break;
-    }
-  }
+  const file = extractFirstImageFile(e.clipboardData);
+  if (file) loadImageFile(file);
 });
 
 backBtn.addEventListener('click', () => {
@@ -1103,8 +1164,99 @@ function clearPreset() {
   presetBtns.forEach(b => b.classList.remove('active'));
 }
 
+function closeFontMenu() {
+  if (!ctrlFontWrap) return;
+  ctrlFontWrap.classList.remove('open');
+  if (ctrlFontTrigger) ctrlFontTrigger.setAttribute('aria-expanded', 'false');
+}
+
+function openFontMenu() {
+  if (!ctrlFontWrap) return;
+  ctrlFontWrap.classList.add('open');
+  if (ctrlFontTrigger) ctrlFontTrigger.setAttribute('aria-expanded', 'true');
+}
+
+function toggleFontMenu() {
+  if (!ctrlFontWrap) return;
+  if (ctrlFontWrap.classList.contains('open')) closeFontMenu();
+  else openFontMenu();
+}
+
+function buildFontDropdown() {
+  if (!ctrlFontWrap || !ctrlFontMenu || !ctrlFontTrigger) return;
+  ctrlFontMenu.innerHTML = '';
+  Array.from(ctrlFont.options).forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'font-select-option';
+    btn.role = 'option';
+    btn.dataset.value = opt.value;
+    btn.textContent = opt.textContent;
+    btn.style.fontFamily = opt.value;
+    btn.addEventListener('click', () => {
+      ctrlFont.value = opt.value;
+      ctrlFont.dispatchEvent(new Event('change', { bubbles: true }));
+      closeFontMenu();
+    });
+    ctrlFontMenu.appendChild(btn);
+  });
+
+  ctrlFontTrigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleFontMenu();
+  });
+
+  ctrlFontTrigger.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openFontMenu();
+      const active = ctrlFontMenu.querySelector('.font-select-option.active') || ctrlFontMenu.firstElementChild;
+      active?.focus();
+    }
+  });
+
+  ctrlFontMenu.addEventListener('keydown', (e) => {
+    const items = Array.from(ctrlFontMenu.querySelectorAll('.font-select-option'));
+    if (!items.length) return;
+    const currentIndex = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeFontMenu();
+      ctrlFontTrigger.focus();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = items[(currentIndex + 1 + items.length) % items.length];
+      next.focus();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = items[(currentIndex - 1 + items.length) % items.length];
+      prev.focus();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!ctrlFontWrap.contains(e.target)) closeFontMenu();
+  });
+}
+
 function syncFontSelectDisplay() {
   ctrlFont.style.fontFamily = ctrlFont.value;
+  const selectedOption = ctrlFont.options[ctrlFont.selectedIndex];
+  if (ctrlFontLabel) {
+    ctrlFontLabel.textContent = selectedOption?.textContent || 'Typeface';
+    ctrlFontLabel.style.fontFamily = ctrlFont.value;
+  }
+  if (ctrlFontMenu) {
+    ctrlFontMenu.querySelectorAll('.font-select-option').forEach((el) => {
+      const isActive = el.dataset.value === ctrlFont.value;
+      el.classList.toggle('active', isActive);
+      el.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  }
 }
 
 // ─── Mobile panel tabs ────────────────────────────────────────────────────────
@@ -1162,22 +1314,26 @@ const ctrlFilterOnTop      = document.getElementById('ctrl-filter-on-top');
 const filterFilmControls   = document.getElementById('filter-film-controls');
 const filterVaporControls  = document.getElementById('filter-vaporwave-controls');
 const filterDarkAcadControls = document.getElementById('filter-darkacademia-controls');
+const filterSolarpunkControls = document.getElementById('filter-solarpunk-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
 const ctrlScanlineSize     = document.getElementById('ctrl-scanline-size');
 const ctrlChroma           = document.getElementById('ctrl-chroma');
 const ctrlDaGrain          = document.getElementById('ctrl-da-grain');
 const ctrlVignette         = document.getElementById('ctrl-vignette');
+const ctrlBloom            = document.getElementById('ctrl-bloom');
+const ctrlHaze             = document.getElementById('ctrl-haze');
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
 // Film: random grain canvas  (mix-blend-mode: overlay)
-// Vaporwave: full pixel render canvas (exact export pipeline at preview res)
+// Vaporwave/Solarpunk: full pixel render canvas (exact export pipeline at preview res)
 // These effects can't be replicated with CSS filters alone.
 
 let grainEl    = null;
 let scanlineEl = null;
 let chromaEl   = null;
 let vignetteEl = null;
+let solarpunkEl = null;
 let vaporSrcCanvas = null;
 let vaporSrcCtx    = null;
 let grainBuffer    = null;
@@ -1198,9 +1354,10 @@ function updateOverlayLayering(el) {
 }
 
 function syncTextFieldLayering() {
-  const onTopVaporwave = state.filter.applyOnTop && state.filter.name === 'vaporwave';
+  const onTopPixelFilter = state.filter.applyOnTop &&
+    (state.filter.name === 'vaporwave' || state.filter.name === 'solarpunk');
   for (const tf of state.textFields) {
-    tf.el.style.zIndex = (onTopVaporwave && state.selectedField === tf) ? '40' : 'auto';
+    tf.el.style.zIndex = (onTopPixelFilter && state.selectedField === tf) ? '40' : 'auto';
   }
 }
 
@@ -1264,7 +1421,7 @@ function updateGrainOverlay() {
     grainEl.style.mixBlendMode = 'overlay';
   }
   updateOverlayLayering(grainEl);
-  const grainT   = (state.filter.params.grain ?? (isDark ? 45 : 50)) / 100;
+  const grainT   = (state.filter.params.grain ?? (isDark ? 45 : 10)) / 100;
   const t        = state.filter.intensity / 100;
   // Film grain is intentionally independent of intensity in export. Dark
   // Academia grain is intensity-scaled in export, so mirror that here.
@@ -1382,6 +1539,55 @@ function updateChromaOverlay() {
   cc.putImageData(previewData, 0, 0);
 }
 
+function updateSolarpunkOverlay() {
+  if (state.filter.name !== 'solarpunk') {
+    if (solarpunkEl) solarpunkEl.style.display = 'none';
+    return;
+  }
+  if (!solarpunkEl) solarpunkEl = makeOverlayCanvas();
+  updateOverlayLayering(solarpunkEl);
+  solarpunkEl.style.mixBlendMode = 'normal';
+
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  const t = state.filter.intensity / 100;
+  const bloomT = (state.filter.params.bloom ?? 35) / 100;
+  const hazeT = (state.filter.params.haze ?? 25) / 100;
+  if (t === 0 && bloomT === 0 && hazeT === 0) {
+    solarpunkEl.style.display = 'none';
+    return;
+  }
+
+  solarpunkEl.width = w;
+  solarpunkEl.height = h;
+  solarpunkEl.style.display = '';
+  solarpunkEl.style.opacity = '1';
+
+  if (!vaporSrcCanvas) {
+    vaporSrcCanvas = document.createElement('canvas');
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
+  }
+  if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
+    vaporSrcCanvas.width = w;
+    vaporSrcCanvas.height = h;
+  }
+  vaporSrcCtx.clearRect(0, 0, w, h);
+  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  if (state.filter.applyOnTop) {
+    drawPreviewTextLayers(vaporSrcCtx, w, h);
+  }
+  const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
+  FILTERS.solarpunk.apply(
+    previewData.data,
+    w,
+    h,
+    t,
+    state.filter.params
+  );
+  const sc  = solarpunkEl.getContext('2d');
+  sc.putImageData(previewData, 0, 0);
+}
+
 function applyImageFilter() {
   const name = state.filter.name;
   const t = state.filter.intensity / 100;
@@ -1390,16 +1596,16 @@ function applyImageFilter() {
   canvasContainer.style.filter = '';
   if (name === 'none') {
     baseImage.style.filter = '';
-  } else if (name === 'vaporwave') {
+  } else if (name === 'vaporwave' || name === 'solarpunk') {
     baseImage.style.filter = '';
   } else {
-    baseImage.style.filter = FILTERS[name].cssPreview(t);
+    baseImage.style.filter = FILTERS[name].cssPreview(t, state.filter.params);
   }
 
   // When "on top" is enabled, approximate export behavior by preview-filtering
   // text fields in-place while leaving image rendering unchanged.
-  const textFilter = (state.filter.applyOnTop && name !== 'none' && name !== 'vaporwave')
-    ? FILTERS[name].cssPreview(t)
+  const textFilter = (state.filter.applyOnTop && name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk')
+    ? FILTERS[name].cssPreview(t, state.filter.params)
     : '';
   for (const tf of state.textFields) {
     tf.el.style.filter = isTextFilterBypassed(tf) ? '' : textFilter;
@@ -1409,6 +1615,7 @@ function applyImageFilter() {
   updateScanlineOverlay();
   updateChromaOverlay();
   updateVignetteOverlay();
+  updateSolarpunkOverlay();
 }
 
 let _filterRenderRaf = 0;
@@ -1429,6 +1636,7 @@ function updateVibeExtraControls() {
   filterFilmControls.classList.toggle('hidden', name !== 'film');
   filterVaporControls.classList.toggle('hidden', name !== 'vaporwave');
   filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
+  filterSolarpunkControls.classList.toggle('hidden', name !== 'solarpunk');
   ctrlFilterOnTop.checked = !!state.filter.applyOnTop;
 }
 
@@ -1449,6 +1657,9 @@ filterChips.forEach(chip => {
     } else if (state.filter.name === 'darkAcademia') {
       ctrlDaGrain.value  = state.filter.params.grain;
       ctrlVignette.value = state.filter.params.vignette;
+    } else if (state.filter.name === 'solarpunk') {
+      ctrlBloom.value = state.filter.params.bloom;
+      ctrlHaze.value  = state.filter.params.haze;
     }
     updateVibeExtraControls();
     scheduleImageFilterRender();
@@ -1492,6 +1703,16 @@ ctrlDaGrain.addEventListener('input', () => {
 
 ctrlVignette.addEventListener('input', () => {
   state.filter.params.vignette = parseInt(ctrlVignette.value);
+  scheduleImageFilterRender();
+});
+
+ctrlBloom.addEventListener('input', () => {
+  state.filter.params.bloom = parseInt(ctrlBloom.value);
+  scheduleImageFilterRender();
+});
+
+ctrlHaze.addEventListener('input', () => {
+  state.filter.params.haze = parseInt(ctrlHaze.value);
   scheduleImageFilterRender();
 });
 
@@ -1821,6 +2042,7 @@ function closeRenderedPreviewOverlay() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 initGuides();
+buildFontDropdown();
 syncFontSelectDisplay();
 switchPanelTab('typography'); // set initial data-panel attribute
 

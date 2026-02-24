@@ -100,9 +100,10 @@
         <div class="controls-row controls-row--typeface">
           <span class="control-label">Typeface</span>
           <div class="typeface-row">
-            <select id="ctrl-font">
+            <select id="ctrl-font" class="native-font-select" aria-hidden="true" tabindex="-1">
               <option value="'Helvetica Neue', Helvetica, sans-serif"        style="font-family:'Helvetica Neue',Helvetica,sans-serif">Helvetica</option>
               <option value="Georgia, 'Times New Roman', serif"              style="font-family:Georgia,'Times New Roman',serif">Georgia</option>
+              <option value="'Times New Roman', Times, serif"                style="font-family:'Times New Roman',Times,serif">Times New Roman</option>
               <option value="'Palatino Linotype', Palatino, serif"           style="font-family:'Palatino Linotype',Palatino,serif">Palatino</option>
               <option value="'Garamond', 'EB Garamond', 'GaramondIO', serif" style="font-family:'GaramondIO','EB Garamond',Garamond,serif">Garamond</option>
               <option value="'Baskerville', 'Libre Baskerville', serif"      style="font-family:Baskerville,'Libre Baskerville',serif">Baskerville</option>
@@ -114,6 +115,20 @@
               <option value="'PressStart2P', monospace"                      style="font-family:'PressStart2P',monospace">Press Start 2P</option>
               <option value="'Silkscreen', monospace"                        style="font-family:'Silkscreen',monospace">Silkscreen</option>
             </select>
+            <div id="ctrl-font-wrap" class="font-select">
+              <button
+                id="ctrl-font-trigger"
+                class="font-select-trigger"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="ctrl-font-menu"
+              >
+                <span id="ctrl-font-label">Helvetica</span>
+                <span class="font-select-caret" aria-hidden="true">▾</span>
+              </button>
+              <div id="ctrl-font-menu" class="font-select-menu" role="listbox" tabindex="-1"></div>
+            </div>
             <button id="ctrl-bold" class="style-btn" title="Bold">
               <svg xmlns="http://www.w3.org/2000/svg" height="17px" viewBox="0 -960 960 960" width="17px" fill="currentColor" aria-hidden="true">
                 <path d="M272-200v-560h221q65 0 120 40t55 111q0 51-23 78.5T602-491q25 11 55.5 41t30.5 90q0 89-65 124.5T501-200H272Zm121-112h104q48 0 58.5-24.5T566-372q0-11-10.5-35.5T494-432H393v120Zm0-228h93q33 0 48-17t15-38q0-24-17-39t-44-15h-95v109Z"/>
@@ -204,7 +219,10 @@
         <div id="filter-layer-row" class="controls-row hidden">
           <label class="vibe-layer-toggle">
             <input type="checkbox" id="ctrl-filter-on-top" />
-            <span class="control-label">Apply to text</span>
+            <span class="vibe-layer-switch" aria-hidden="true">
+              <span class="vibe-layer-thumb"></span>
+            </span>
+            <span class="control-label vibe-layer-label">Apply to text</span>
           </label>
         </div>
         <div id="filter-intensity-row" class="controls-row hidden">
@@ -218,7 +236,7 @@
         <div id="filter-film-controls" class="controls-row hidden">
           <div class="control-group control-group--size">
             <span class="control-label">Grain</span>
-            <input type="range" id="ctrl-grain" min="0" max="100" step="1" value="50" />
+            <input type="range" id="ctrl-grain" min="0" max="100" step="1" value="10" />
           </div>
         </div>
 
@@ -252,6 +270,20 @@
             <div class="control-group control-group--size">
               <span class="control-label">Vignette</span>
               <input type="range" id="ctrl-vignette" min="0" max="100" step="1" value="65" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Solarpunk-specific controls -->
+        <div id="filter-solarpunk-controls" class="vibe-extra-controls hidden">
+          <div class="controls-row controls-row--split">
+            <div class="control-group control-group--size">
+              <span class="control-label">Bloom</span>
+              <input type="range" id="ctrl-bloom" min="0" max="100" step="1" value="35" />
+            </div>
+            <div class="control-group control-group--size">
+              <span class="control-label">Haze</span>
+              <input type="range" id="ctrl-haze" min="0" max="100" step="1" value="25" />
             </div>
           </div>
         </div>
