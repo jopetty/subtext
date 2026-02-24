@@ -51,7 +51,7 @@ const PRESETS = {
     align:        'center',
     fgColor:      '#ffcce6',
     outlineColor: '#9656f0',
-    outlineWidth: 4,
+    outlineWidth: 7,
     blur:         0,
   },
   darkAcademia: {
@@ -304,6 +304,7 @@ const fileInput      = document.getElementById('file-input');
 const backBtn        = document.getElementById('back-btn');
 const exportBtn      = document.getElementById('export-btn');
 const baseImage      = document.getElementById('base-image');
+const canvasWrapper   = document.getElementById('canvas-wrapper');
 const canvasContainer = document.getElementById('canvas-container');
 const canvasHint      = document.getElementById('canvas-hint');
 const exportCanvas   = document.getElementById('export-canvas');
@@ -368,6 +369,16 @@ function dismissHint() {
   canvasHint.addEventListener('transitionend', () => canvasHint.remove(), { once: true });
 }
 
+function fitImageToWrapper() {
+  if (!state.imageLoaded) return;
+  const availW = canvasWrapper.clientWidth  - 20; // subtract padding
+  const availH = canvasWrapper.clientHeight - 20;
+  if (availW <= 0 || availH <= 0) return;
+  const scale = Math.min(availW / state.imageNaturalW, availH / state.imageNaturalH);
+  baseImage.style.width  = Math.round(state.imageNaturalW * scale) + 'px';
+  baseImage.style.height = Math.round(state.imageNaturalH * scale) + 'px';
+}
+
 function showEditor() {
   uploadScreen.classList.remove('active');
   editorScreen.classList.add('active');
@@ -380,6 +391,8 @@ function showEditor() {
   // Always start on the Typography tab when opening the editor
   switchPanelTab('typography');
   updatePanel();
+  // Size image to fill available space after layout is committed
+  requestAnimationFrame(fitImageToWrapper);
   // Show the canvas hint and auto-dismiss after 10 s
   if (canvasHint) {
     canvasHint.classList.remove('hidden');
@@ -392,6 +405,8 @@ function showUpload() {
   editorScreen.classList.remove('active');
   uploadScreen.classList.add('active');
   setThemeColors('upload');
+  baseImage.style.width  = '';
+  baseImage.style.height = '';
   deselectAll();
   // Reset filter
   state.filter = { name: 'none', intensity: 75, params: {} };
@@ -1436,6 +1451,12 @@ switchPanelTab('typography'); // set initial data-panel attribute
 
 window.addEventListener('resize', () => {
   state.textFields.forEach(tf => tf.reposition());
+});
+
+// ─── Refit image on window resize ────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+  if (state.imageLoaded) fitImageToWrapper();
 });
 
 // ─── Prevent accidental back/navigation ──────────────────────────────────────
