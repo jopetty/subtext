@@ -554,9 +554,13 @@ async function normalizeUploadImage(file) {
   return inputBlob;
 }
 
-function loadImageFile(file) {
+function loadImageFile(file, opts = {}) {
+  const { resetSession = false } = opts;
   if (!file) return;
   if (state.uploadBusy) return;
+  if (resetSession) {
+    showUpload();
+  }
   if (!isLikelyImageFile(file)) {
     alert('Please choose an image file.');
     return;
@@ -651,7 +655,11 @@ function showEditor() {
   switchPanelTab('typography');
   updatePanel();
   // Size image to fill available space after layout is committed
-  requestAnimationFrame(fitImageToWrapper);
+  requestAnimationFrame(() => {
+    fitImageToWrapper();
+    // Force fresh preview render so pixel-overlay vibes don't show stale image data.
+    scheduleImageFilterRender();
+  });
   // Show the canvas hint and auto-dismiss after 10 s
   if (canvasHint) {
     canvasHint.classList.remove('hidden');
@@ -668,6 +676,16 @@ function showUpload() {
   uploadScreen.classList.remove('drag-over');
   dragEnterCount = 0;
   setThemeColors('upload');
+  state.imageLoaded = false;
+  state.imageNaturalW = 0;
+  state.imageNaturalH = 0;
+  if (state.imageObjectUrl) {
+    URL.revokeObjectURL(state.imageObjectUrl);
+    state.imageObjectUrl = null;
+  }
+  baseImage.onload = null;
+  baseImage.onerror = null;
+  baseImage.removeAttribute('src');
   baseImage.style.width  = '';
   baseImage.style.height = '';
   deselectAll();
@@ -763,14 +781,16 @@ editorScreen.addEventListener('drop', (e) => {
   editorScreen.classList.remove('drag-over');
   if (state.uploadBusy || !state.imageLoaded) return;
   const file = extractFirstImageFile(e.dataTransfer);
-  loadImageFile(file);
+  loadImageFile(file, { resetSession: true });
 });
 
 // Paste from clipboard
 window.addEventListener('paste', (e) => {
   if (state.uploadBusy) return;
   const file = extractFirstImageFile(e.clipboardData);
-  if (file) loadImageFile(file);
+  if (file) {
+    loadImageFile(file, { resetSession: editorScreen.classList.contains('active') });
+  }
 });
 
 backBtn.addEventListener('click', () => {
