@@ -24,6 +24,14 @@
   <!-- Light/dark variants; JS updates these on screen transitions -->
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f0e8" />
   <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#191410" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Subtext" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -196,6 +204,10 @@
             <span class="control-label">Blur</span>
             <input type="range" id="ctrl-blur" min="0" max="1" step="0.05" value="0" />
           </div>
+        </div>
+
+        <div class="controls-row controls-row--text-action">
+          <button id="ctrl-auto-contrast" type="button" class="text-action-btn">Auto Contrast</button>
         </div>
 
       </div>

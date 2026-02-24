@@ -352,6 +352,7 @@ const ctrlFgColor      = document.getElementById('ctrl-fg-color');
 const ctrlOutlineColor = document.getElementById('ctrl-outline-color');
 const ctrlOutlineWidth = document.getElementById('ctrl-outline-width');
 const ctrlOutlineWidthVal = document.getElementById('ctrl-outline-width-val');
+const ctrlAutoContrast = document.getElementById('ctrl-auto-contrast');
 const alignBtns        = document.querySelectorAll('.align-btn');
 const presetBtns       = document.querySelectorAll('.preset-btn');
 const uploadStatus     = document.getElementById('upload-status');
@@ -733,6 +734,7 @@ class TextField {
     this.yPct = yPct;   // center-y as fraction of container height
     this.style = { ...style };
     this.text = '';
+    this.autoContrastStep = 0;
     this.el = null;
     this.innerEl = null;
     this._build();
@@ -1123,7 +1125,15 @@ function startDrag(e, tf) {
 
 // ─── Panel / controls ─────────────────────────────────────────────────────────
 
-function updatePanel() {}
+function updatePanel() {
+  if (ctrlAutoContrast) {
+    const hasSelectedField = !!state.selectedField;
+    ctrlAutoContrast.disabled = !hasSelectedField;
+    ctrlAutoContrast.title = hasSelectedField
+      ? 'Automatically optimize text contrast for the selected field'
+      : 'Select a text field first';
+  }
+}
 
 function syncControlsToStyle(s, activePreset) {
   ctrlFont.value                  = s.font;
@@ -1162,6 +1172,202 @@ function clearPreset() {
   if (state.selectedField) state.selectedField.activePreset = null;
   state.lastPreset = null;
   presetBtns.forEach(b => b.classList.remove('active'));
+}
+
+let _contrastCanvas = null;
+let _contrastCtx = null;
+
+function getContrastCanvas(w, h) {
+  if (!_contrastCanvas) {
+    _contrastCanvas = document.createElement('canvas');
+    _contrastCtx = _contrastCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  if (_contrastCanvas.width !== w || _contrastCanvas.height !== h) {
+    _contrastCanvas.width = w;
+    _contrastCanvas.height = h;
+  }
+  return _contrastCtx;
+}
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return { h: h / 6, s, l };
+}
+
+function hslToRgb(h, s, l) {
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  if (s === 0) {
+    const v = Math.round(l * 255);
+    return { r: v, g: v, b: v };
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const r = hue2rgb(p, q, h + 1/3);
+  const g = hue2rgb(p, q, h);
+  const b = hue2rgb(p, q, h - 1/3);
+  return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+}
+
+function rgbToHex(r, g, b) {
+  return `#${[r, g, b].map(v => {
+    const n = Math.max(0, Math.min(255, Math.round(v)));
+    return n.toString(16).padStart(2, '0');
+  }).join('')}`;
+}
+
+function renderFilteredPreviewToContrastCanvas() {
+  const w = baseImage.offsetWidth || 0;
+  const h = baseImage.offsetHeight || 0;
+  if (!w || !h) return { ctx: null, w: 0, h: 0 };
+
+  const ctx = getContrastCanvas(w, h);
+  const t = state.filter.intensity / 100;
+  const name = state.filter.name;
+  ctx.clearRect(0, 0, w, h);
+
+  if (name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk') {
+    ctx.filter = FILTERS[name].cssPreview(t, state.filter.params);
+  } else {
+    ctx.filter = 'none';
+  }
+  ctx.drawImage(baseImage, 0, 0, w, h);
+  ctx.filter = 'none';
+
+  if (name === 'vaporwave' || name === 'solarpunk') {
+    const px = ctx.getImageData(0, 0, w, h);
+    FILTERS[name].apply(px.data, w, h, t, state.filter.params);
+    ctx.putImageData(px, 0, 0);
+  }
+  return { ctx, w, h };
+}
+
+function sampleFieldBackgroundLuma(tf, ctx, w, h) {
+  if (!ctx || !w || !h) return 128;
+
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const imgRect = baseImage.getBoundingClientRect();
+  const imgOffsetX = imgRect.left - containerRect.left;
+  const imgOffsetY = imgRect.top - containerRect.top;
+
+  const cx = tf.xPct * canvasContainer.offsetWidth  - imgOffsetX;
+  const cy = tf.yPct * canvasContainer.offsetHeight - imgOffsetY;
+  const sampleW = Math.max(20, Math.min(w, Math.round(tf.innerEl.offsetWidth * 0.86)));
+  const sampleH = Math.max(16, Math.min(h, Math.round(tf.innerEl.offsetHeight * 0.8)));
+  const sx = Math.max(0, Math.min(w - sampleW, Math.round(cx - sampleW / 2)));
+  const sy = Math.max(0, Math.min(h - sampleH, Math.round(cy - sampleH / 2)));
+  const data = ctx.getImageData(sx, sy, sampleW, sampleH).data;
+
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+  }
+  return sum / (data.length / 4);
+}
+
+function sampleImagePalette(ctx, w, h) {
+  if (!ctx || !w || !h) return { h: 0.08, s: 0.35, l: 0.5 };
+  const step = Math.max(4, Math.floor(Math.max(w, h) / 120));
+  const px = ctx.getImageData(0, 0, w, h).data;
+  let sumSin = 0;
+  let sumCos = 0;
+  let sumS = 0;
+  let sumL = 0;
+  let count = 0;
+
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const i = (y * w + x) * 4;
+      const a = px[i + 3];
+      if (a < 8) continue;
+      const { h: hh, s, l } = rgbToHsl(px[i], px[i + 1], px[i + 2]);
+      const hueWeight = 0.2 + s;
+      const ang = hh * Math.PI * 2;
+      sumSin += Math.sin(ang) * hueWeight;
+      sumCos += Math.cos(ang) * hueWeight;
+      sumS += s;
+      sumL += l;
+      count++;
+    }
+  }
+  if (!count) return { h: 0.08, s: 0.35, l: 0.5 };
+  let hAvg = Math.atan2(sumSin, sumCos) / (Math.PI * 2);
+  if (hAvg < 0) hAvg += 1;
+  return {
+    h: hAvg,
+    s: Math.max(0, Math.min(1, sumS / count)),
+    l: Math.max(0, Math.min(1, sumL / count)),
+  };
+}
+
+function makePaletteContrastPair(bgLuma, palette, stepIndex) {
+  const variant = stepIndex % 6;
+  const hueOffsets = [0, 0.06, -0.06, 0.12, -0.12, 0.5];
+  const hue = (palette.h + hueOffsets[variant] + 1) % 1;
+  const sat = Math.max(0.18, Math.min(0.72, palette.s * 0.82 + 0.18));
+  const darkBg = bgLuma < 150;
+
+  let fgL = darkBg ? 0.9 : 0.16;
+  let outL = darkBg ? 0.14 : 0.9;
+  if (variant === 1) { fgL += darkBg ? -0.05 : 0.05; outL += darkBg ? 0.06 : -0.06; }
+  if (variant === 2) { fgL += darkBg ? -0.08 : 0.08; outL += darkBg ? 0.02 : -0.02; }
+  if (variant === 3) { fgL += darkBg ? -0.02 : 0.03; outL += darkBg ? 0.08 : -0.08; }
+  if (variant === 4) { fgL += darkBg ? -0.1 : 0.1; outL += darkBg ? 0.1 : -0.1; }
+  if (variant === 5) { fgL += darkBg ? -0.03 : 0.03; outL += darkBg ? 0.05 : -0.05; }
+  fgL = Math.max(0.08, Math.min(0.95, fgL));
+  outL = Math.max(0.05, Math.min(0.96, outL));
+
+  const fgRgb = hslToRgb(hue, sat, fgL);
+  const outHue = (hue + (variant === 5 ? 0 : 0.5)) % 1;
+  const outSat = Math.max(0.04, sat * 0.45);
+  const outRgb = hslToRgb(outHue, outSat, outL);
+
+  return {
+    fgColor: rgbToHex(fgRgb.r, fgRgb.g, fgRgb.b),
+    outlineColor: rgbToHex(outRgb.r, outRgb.g, outRgb.b),
+  };
+}
+
+function applyAutoContrastToSelected() {
+  const tf = state.selectedField;
+  if (!tf) return;
+
+  const rendered = renderFilteredPreviewToContrastCanvas();
+  const bgLuma = sampleFieldBackgroundLuma(tf, rendered.ctx, rendered.w, rendered.h);
+  const palette = sampleImagePalette(rendered.ctx, rendered.w, rendered.h);
+  const step = tf.autoContrastStep || 0;
+  const pair = step === 0
+    ? (bgLuma >= 150
+      ? { fgColor: '#1a1410', outlineColor: '#f5f0e8' }
+      : { fgColor: '#ffffff', outlineColor: '#000000' })
+    : makePaletteContrastPair(bgLuma, palette, step - 1);
+  const fgColor = pair.fgColor;
+  const outlineColor = pair.outlineColor;
+  const outlineWidth = Math.max(2, tf.style.outlineWidth || 0);
+
+  applyControlsToSelected({ fgColor, outlineColor, outlineWidth });
+  ctrlFgColor.value = fgColor;
+  ctrlOutlineColor.value = outlineColor;
+  ctrlOutlineWidth.value = outlineWidth;
+  ctrlOutlineWidthVal.textContent = outlineWidth;
+  tf.autoContrastStep = step + 1;
+  clearPreset();
 }
 
 function closeFontMenu() {
@@ -1732,6 +1938,10 @@ ctrlOutlineWidth.addEventListener('input', () => {
   clearPreset();
 });
 
+ctrlAutoContrast.addEventListener('click', () => {
+  applyAutoContrastToSelected();
+});
+
 alignBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     alignBtns.forEach(b => b.classList.remove('active'));
@@ -1988,6 +2198,8 @@ function showRenderedPreviewOverlay(blob, opts = {}) {
   const overlay = document.createElement('div');
   overlay.id    = 'ios-save-overlay';
   overlay.dataset.blobUrl = url;
+  const top = document.createElement('div');
+  top.className = 'ios-overlay-top';
 
   if (iosSaveMode) {
     // "Open Image" opens the blob in iOS Quick Look / Safari viewer, where
@@ -1998,36 +2210,43 @@ function showRenderedPreviewOverlay(blob, opts = {}) {
     openLink.download = 'subtext.jpg';
     openLink.className = 'ios-open-btn';
     openLink.textContent = 'Open Image';
-    overlay.appendChild(openLink);
+    top.appendChild(openLink);
 
     const msg = document.createElement('p');
     msg.textContent = 'Then tap the share icon ↗ and choose "Save Image".';
-    overlay.appendChild(msg);
+    top.appendChild(msg);
 
     const divider = document.createElement('p');
     divider.className = 'ios-overlay-divider';
     divider.textContent = '— or tap and hold the image below —';
-    overlay.appendChild(divider);
+    top.appendChild(divider);
   } else {
     const heading = document.createElement('p');
     heading.textContent = title;
-    overlay.appendChild(heading);
+    top.appendChild(heading);
   }
 
+  const imageWrap = document.createElement('div');
+  imageWrap.className = 'ios-overlay-image-wrap';
   const img = document.createElement('img');
   img.src   = url;
+  imageWrap.appendChild(img);
 
   overlay.addEventListener('click', (e) => {
     if (e.target === img) return;
     closeRenderedPreviewOverlay();
   });
 
+  const actions = document.createElement('div');
+  actions.className = 'ios-overlay-actions';
   const btn = document.createElement('button');
   btn.textContent = 'Done';
   btn.addEventListener('click', closeRenderedPreviewOverlay);
 
-  overlay.appendChild(img);
-  overlay.appendChild(btn);
+  actions.appendChild(btn);
+  overlay.appendChild(top);
+  overlay.appendChild(imageWrap);
+  overlay.appendChild(actions);
   document.body.appendChild(overlay);
 }
 
@@ -2126,3 +2345,15 @@ window.addEventListener('beforeunload', (e) => {
     e.returnValue = '';
   }
 });
+
+if ('serviceWorker' in navigator) {
+  const isLocalhost =
+    location.hostname === 'localhost' ||
+    location.hostname === '127.0.0.1' ||
+    location.hostname === '[::1]';
+  if (location.protocol === 'https:' || isLocalhost) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+  }
+}
