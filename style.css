@@ -442,6 +442,11 @@ html, body {
   background: var(--border);
 }
 
+/* Match preset-pill hover behavior across button controls. */
+:where(.icon-btn, .top-action-btn, .font-select-trigger, .style-btn, .align-btn, .text-action-btn, .filter-chip, .preset-btn):hover:not(.active):not(:disabled) {
+  border-color: var(--ink-muted);
+}
+
 /* CANVAS HINT */
 
 #canvas-hint {
