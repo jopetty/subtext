@@ -304,6 +304,59 @@ const FILTERS = {
       }
     },
   },
+
+  hegseth: {
+    label: 'Hegseth',
+    cssPreview: (t) =>
+      `brightness(${1 - 0.01*t}) contrast(${1 - 0.04*t})`,
+    apply(data, w, h, t, params = {}, pixelScale = 1) {
+      const orig = new Uint8ClampedArray(data);
+      const angleDeg = params.angle ?? 0;
+      const ghostDistanceT = (params.ghostDistance ?? 50) / 100;
+      const angleRad = angleDeg * Math.PI / 180;
+      const dirX = Math.cos(angleRad);
+      const dirY = Math.sin(angleRad);
+      const distanceMul = 0.35 + 1.25 * ghostDistanceT;
+      const shift1 = Math.max(1, Math.round((2 + 14 * t) * distanceMul * pixelScale));
+      const shift2 = Math.max(2, Math.round((5 + 24 * t) * distanceMul * pixelScale));
+      const mainW = 0.58;
+      const g1W = 0.24 + 0.16 * t;
+      const g2W = 0.12 + 0.1 * t;
+      const invWSum = 1 / (mainW + g1W + g2W);
+      const dy1 = Math.round(dirY * shift1);
+      const dy2 = Math.round(dirY * shift2);
+      const wobbleAmp = 2.3 * t * pixelScale;
+
+      for (let y = 0; y < h; y++) {
+        const wobble = Math.round(Math.sin(y * 0.08) * wobbleAmp);
+        const yBase = y * w * 4;
+        const g1y = y + dy1 < 0 ? 0 : y + dy1 >= h ? h - 1 : y + dy1;
+        const g2y = y - dy2 < 0 ? 0 : y - dy2 >= h ? h - 1 : y - dy2;
+        const g1BaseY = g1y * w * 4;
+        const g2BaseY = g2y * w * 4;
+        const dx1 = Math.round(dirX * shift1) + wobble;
+        const dx2 = Math.round(dirX * shift2) + Math.round(wobble * 0.5);
+
+        for (let x = 0; x < w; x++) {
+          const xm1 = x > 0 ? x - 1 : 0;
+          const xp1 = x < w - 1 ? x + 1 : w - 1;
+          const g1x = x + dx1 < 0 ? 0 : x + dx1 >= w ? w - 1 : x + dx1;
+          const g1x1 = g1x < w - 1 ? g1x + 1 : w - 1;
+          const g2x = x - dx2 < 0 ? 0 : x - dx2 >= w ? w - 1 : x - dx2;
+          const g2x1 = g2x > 0 ? g2x - 1 : 0;
+          const i = yBase + x * 4;
+
+          for (let c = 0; c < 3; c++) {
+            // In-place smear + two directional ghost copies.
+            const base = (orig[yBase + xm1 * 4 + c] + orig[yBase + x * 4 + c] + orig[yBase + xp1 * 4 + c]) / 3;
+            const g1 = (orig[g1BaseY + g1x * 4 + c] + orig[g1BaseY + g1x1 * 4 + c]) / 2;
+            const g2 = (orig[g2BaseY + g2x * 4 + c] + orig[g2BaseY + g2x1 * 4 + c]) / 2;
+            data[i + c] = clamp255((base * mainW + g1 * g1W + g2 * g2W) * invWSum);
+          }
+        }
+      }
+    },
+  },
 };
 
 // Default values for vibe-specific extra params
@@ -312,6 +365,7 @@ const FILTER_PARAM_DEFAULTS = {
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
   darkAcademia: { grain: 45, vignette: 65 },
   solarpunk:   { bloom: 35, haze: 25 },
+  hegseth:     { angle: 0, ghostDistance: 50 },
 };
 
 function defaultStyle() {
@@ -626,6 +680,7 @@ function showUpload() {
   if (chromaEl) chromaEl.style.display = 'none';
   if (vignetteEl) vignetteEl.style.display = 'none';
   if (solarpunkEl) solarpunkEl.style.display = 'none';
+  if (hegsethEl) hegsethEl.style.display = 'none';
   filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
   filterIntensityRow.classList.add('hidden');
   filterLayerRow.classList.add('hidden');
@@ -633,6 +688,7 @@ function showUpload() {
   filterVaporControls.classList.add('hidden');
   filterDarkAcadControls.classList.add('hidden');
   filterSolarpunkControls.classList.add('hidden');
+  filterHegsethControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
   ctrlFilterOnTop.checked = false;
   if (_filterRenderRaf) {
@@ -1242,7 +1298,7 @@ function renderFilteredPreviewToContrastCanvas() {
   const name = state.filter.name;
   ctx.clearRect(0, 0, w, h);
 
-  if (name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk') {
+  if (name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk' && name !== 'hegseth') {
     ctx.filter = FILTERS[name].cssPreview(t, state.filter.params);
   } else {
     ctx.filter = 'none';
@@ -1250,7 +1306,7 @@ function renderFilteredPreviewToContrastCanvas() {
   ctx.drawImage(baseImage, 0, 0, w, h);
   ctx.filter = 'none';
 
-  if (name === 'vaporwave' || name === 'solarpunk') {
+  if (name === 'vaporwave' || name === 'solarpunk' || name === 'hegseth') {
     const px = ctx.getImageData(0, 0, w, h);
     FILTERS[name].apply(px.data, w, h, t, state.filter.params);
     ctx.putImageData(px, 0, 0);
@@ -1514,6 +1570,7 @@ ctrlBlur.addEventListener('input', () => {
 
 const filterChips          = document.querySelectorAll('.filter-chip');
 const filterIntensityRow   = document.getElementById('filter-intensity-row');
+const filterIntensityLabel = document.getElementById('filter-intensity-label');
 const filterLayerRow       = document.getElementById('filter-layer-row');
 const ctrlFilterIntensity  = document.getElementById('ctrl-filter-intensity');
 const ctrlFilterOnTop      = document.getElementById('ctrl-filter-on-top');
@@ -1521,6 +1578,7 @@ const filterFilmControls   = document.getElementById('filter-film-controls');
 const filterVaporControls  = document.getElementById('filter-vaporwave-controls');
 const filterDarkAcadControls = document.getElementById('filter-darkacademia-controls');
 const filterSolarpunkControls = document.getElementById('filter-solarpunk-controls');
+const filterHegsethControls = document.getElementById('filter-hegseth-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
 const ctrlScanlineSize     = document.getElementById('ctrl-scanline-size');
@@ -1529,6 +1587,8 @@ const ctrlDaGrain          = document.getElementById('ctrl-da-grain');
 const ctrlVignette         = document.getElementById('ctrl-vignette');
 const ctrlBloom            = document.getElementById('ctrl-bloom');
 const ctrlHaze             = document.getElementById('ctrl-haze');
+const ctrlHegsethAngle     = document.getElementById('ctrl-hegseth-angle');
+const ctrlHegsethGhostDistance = document.getElementById('ctrl-hegseth-ghost-distance');
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
 // Film: random grain canvas  (mix-blend-mode: overlay)
@@ -1540,6 +1600,7 @@ let scanlineEl = null;
 let chromaEl   = null;
 let vignetteEl = null;
 let solarpunkEl = null;
+let hegsethEl = null;
 let vaporSrcCanvas = null;
 let vaporSrcCtx    = null;
 let grainBuffer    = null;
@@ -1561,7 +1622,7 @@ function updateOverlayLayering(el) {
 
 function syncTextFieldLayering() {
   const onTopPixelFilter = state.filter.applyOnTop &&
-    (state.filter.name === 'vaporwave' || state.filter.name === 'solarpunk');
+    (state.filter.name === 'vaporwave' || state.filter.name === 'solarpunk' || state.filter.name === 'hegseth');
   for (const tf of state.textFields) {
     tf.el.style.zIndex = (onTopPixelFilter && state.selectedField === tf) ? '40' : 'auto';
   }
@@ -1794,6 +1855,53 @@ function updateSolarpunkOverlay() {
   sc.putImageData(previewData, 0, 0);
 }
 
+function updateHegsethOverlay() {
+  if (state.filter.name !== 'hegseth') {
+    if (hegsethEl) hegsethEl.style.display = 'none';
+    return;
+  }
+  if (!hegsethEl) hegsethEl = makeOverlayCanvas();
+  updateOverlayLayering(hegsethEl);
+  hegsethEl.style.mixBlendMode = 'normal';
+
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  const t = state.filter.intensity / 100;
+  if (t === 0) {
+    hegsethEl.style.display = 'none';
+    return;
+  }
+
+  hegsethEl.width = w;
+  hegsethEl.height = h;
+  hegsethEl.style.display = '';
+  hegsethEl.style.opacity = '1';
+
+  if (!vaporSrcCanvas) {
+    vaporSrcCanvas = document.createElement('canvas');
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
+  }
+  if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
+    vaporSrcCanvas.width = w;
+    vaporSrcCanvas.height = h;
+  }
+  vaporSrcCtx.clearRect(0, 0, w, h);
+  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  if (state.filter.applyOnTop) {
+    drawPreviewTextLayers(vaporSrcCtx, w, h);
+  }
+  const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
+  FILTERS.hegseth.apply(
+    previewData.data,
+    w,
+    h,
+    t,
+    state.filter.params
+  );
+  const hc = hegsethEl.getContext('2d');
+  hc.putImageData(previewData, 0, 0);
+}
+
 function applyImageFilter() {
   const name = state.filter.name;
   const t = state.filter.intensity / 100;
@@ -1802,7 +1910,7 @@ function applyImageFilter() {
   canvasContainer.style.filter = '';
   if (name === 'none') {
     baseImage.style.filter = '';
-  } else if (name === 'vaporwave' || name === 'solarpunk') {
+  } else if (name === 'vaporwave' || name === 'solarpunk' || name === 'hegseth') {
     baseImage.style.filter = '';
   } else {
     baseImage.style.filter = FILTERS[name].cssPreview(t, state.filter.params);
@@ -1810,7 +1918,7 @@ function applyImageFilter() {
 
   // When "on top" is enabled, approximate export behavior by preview-filtering
   // text fields in-place while leaving image rendering unchanged.
-  const textFilter = (state.filter.applyOnTop && name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk')
+  const textFilter = (state.filter.applyOnTop && name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk' && name !== 'hegseth')
     ? FILTERS[name].cssPreview(t, state.filter.params)
     : '';
   for (const tf of state.textFields) {
@@ -1822,6 +1930,7 @@ function applyImageFilter() {
   updateChromaOverlay();
   updateVignetteOverlay();
   updateSolarpunkOverlay();
+  updateHegsethOverlay();
 }
 
 let _filterRenderRaf = 0;
@@ -1838,11 +1947,15 @@ function updateVibeExtraControls() {
   const name = state.filter.name;
   const isNone = name === 'none';
   filterIntensityRow.classList.toggle('hidden', isNone);
+  if (filterIntensityLabel) {
+    filterIntensityLabel.textContent = name === 'hegseth' ? 'Beers' : 'Intensity';
+  }
   filterLayerRow.classList.toggle('hidden', isNone);
   filterFilmControls.classList.toggle('hidden', name !== 'film');
   filterVaporControls.classList.toggle('hidden', name !== 'vaporwave');
   filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
   filterSolarpunkControls.classList.toggle('hidden', name !== 'solarpunk');
+  filterHegsethControls.classList.toggle('hidden', name !== 'hegseth');
   ctrlFilterOnTop.checked = !!state.filter.applyOnTop;
 }
 
@@ -1866,6 +1979,9 @@ filterChips.forEach(chip => {
     } else if (state.filter.name === 'solarpunk') {
       ctrlBloom.value = state.filter.params.bloom;
       ctrlHaze.value  = state.filter.params.haze;
+    } else if (state.filter.name === 'hegseth') {
+      ctrlHegsethAngle.value = state.filter.params.angle;
+      ctrlHegsethGhostDistance.value = state.filter.params.ghostDistance;
     }
     updateVibeExtraControls();
     scheduleImageFilterRender();
@@ -1919,6 +2035,16 @@ ctrlBloom.addEventListener('input', () => {
 
 ctrlHaze.addEventListener('input', () => {
   state.filter.params.haze = parseInt(ctrlHaze.value);
+  scheduleImageFilterRender();
+});
+
+ctrlHegsethAngle.addEventListener('input', () => {
+  state.filter.params.angle = parseInt(ctrlHegsethAngle.value);
+  scheduleImageFilterRender();
+});
+
+ctrlHegsethGhostDistance.addEventListener('input', () => {
+  state.filter.params.ghostDistance = parseInt(ctrlHegsethGhostDistance.value);
   scheduleImageFilterRender();
 });
 
@@ -2025,7 +2151,7 @@ function softBlur(ctx, w, h, radius) {
 function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   if (state.filter.name === 'none') return;
   const imgData = ctx.getImageData(0, 0, w, h);
-  const scaleForFilter = state.filter.name === 'vaporwave' ? pixelScale : 1;
+  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth') ? pixelScale : 1;
   FILTERS[state.filter.name].apply(
     imgData.data,
     w,

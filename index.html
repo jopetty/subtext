@@ -226,6 +226,7 @@
             <button class="filter-chip" data-filter="darkAcademia">Dark Academia</button>
             <button class="filter-chip" data-filter="vaporwave">Vaporwave</button>
             <button class="filter-chip" data-filter="solarpunk">Solarpunk</button>
+            <button class="filter-chip" data-filter="hegseth">Hegseth</button>
           </div>
         </div>
         <div id="filter-layer-row" class="controls-row hidden">
@@ -239,7 +240,7 @@
         </div>
         <div id="filter-intensity-row" class="controls-row hidden">
           <div class="control-group control-group--size">
-            <span class="control-label">Intensity</span>
+            <span id="filter-intensity-label" class="control-label">Intensity</span>
             <input type="range" id="ctrl-filter-intensity" min="0" max="100" step="1" value="75" />
           </div>
         </div>
@@ -296,6 +297,20 @@
             <div class="control-group control-group--size">
               <span class="control-label">Haze</span>
               <input type="range" id="ctrl-haze" min="0" max="100" step="1" value="25" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Hegseth-specific controls -->
+        <div id="filter-hegseth-controls" class="vibe-extra-controls hidden">
+          <div class="controls-row controls-row--split">
+            <div class="control-group control-group--size">
+              <span class="control-label">Angle</span>
+              <input type="range" id="ctrl-hegseth-angle" min="0" max="360" step="1" value="0" />
+            </div>
+            <div class="control-group control-group--size">
+              <span class="control-label">Ghost distance</span>
+              <input type="range" id="ctrl-hegseth-ghost-distance" min="0" max="100" step="1" value="50" />
             </div>
           </div>
         </div>
