@@ -24,7 +24,7 @@ const state = {
 // Preset styles
 const PRESETS = {
   classic: {
-    font:         "'Helvetica Neue', Helvetica, sans-serif",
+    font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
     weight:       '400',
     italic:       false,
@@ -35,7 +35,7 @@ const PRESETS = {
     blur:         0,
   },
   cinema: {
-    font:         "'Helvetica Neue', Helvetica, sans-serif",
+    font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
     weight:       '400',
     italic:       true,
@@ -46,7 +46,7 @@ const PRESETS = {
     blur:         0,
   },
   vaporwave: {
-    font:         "'Handjet', sans-serif",
+    font:         "var(--font-handjet)",
     size:         5,
     weight:       '700',
     italic:       true,
@@ -57,7 +57,7 @@ const PRESETS = {
     blur:         0.15,
   },
   darkAcademia: {
-    font:         "'Garamontio', 'EB Garamond', Garamond, serif",
+    font:         "var(--font-garamontio)",
     size:         5,
     weight:       '400',
     italic:       false,
@@ -137,6 +137,118 @@ const FILTERS = {
         data[i]   = clamp255(((r - 128) * cont + 128) * bright);
         data[i+1] = clamp255(((g - 128) * cont + 128) * bright);
         data[i+2] = clamp255(((b - 128) * cont + 128) * bright);
+      }
+    },
+  },
+
+  twilight: {
+    label: 'Twilight',
+    cssPreview: (t) =>
+      `saturate(${1 - 0.04*t}) hue-rotate(${-12*t}deg) brightness(${1 - 0.12*t}) contrast(${1 + 0.1*t})`,
+    apply(data, w, h, t) {
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+        const lm = 0.299*r + 0.587*g + 0.114*b;
+        const bright = lm / 255;
+
+        // Aggressive cool cast with added green for cyan/teal balance.
+        r = clamp255(r - (32 + 14 * bright) * t);
+        g = clamp255(g + (20 + 14 * (1 - bright)) * t);
+        b = clamp255(b + (50 + 24 * (1 - bright)) * t);
+
+        // Keep it moody while preserving strong chroma in blues.
+        const s = 1 - 0.03 * t;
+        r = clamp255(lm + (r - lm) * s);
+        g = clamp255(lm + (g - lm) * s);
+        b = clamp255(lm + (b - lm) * s);
+
+        // Stronger contrast + darker exposure.
+        const c = 1 + 0.1 * t;
+        const br = 1 - 0.12 * t;
+        data[i]   = clamp255(((r - 128) * c + 128) * br);
+        data[i+1] = clamp255(((g - 128) * c + 128) * br);
+        data[i+2] = clamp255(((b - 128) * c + 128) * br);
+      }
+    },
+  },
+
+  mexico: {
+    label: 'Mexico',
+    cssPreview: (t) =>
+      `sepia(${0.8*t}) saturate(${1 + 0.9*t}) hue-rotate(${-38*t}deg) brightness(${1 + 0.05*t}) contrast(${1 + 0.16*t})`,
+    apply(data, w, h, t) {
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+        const lm = 0.299*r + 0.587*g + 0.114*b;
+        const bright = lm / 255;
+
+        // Hard yellow wash overall, stronger in highlights.
+        const warm = t * (0.22 + 0.35 * bright);
+        r = clamp255(r + 118 * warm);
+        g = clamp255(g + 82 * warm);
+        b = clamp255(b - 88 * warm);
+
+        // Burnt-orange shadow push.
+        const sh = (1 - bright) * t;
+        r = clamp255(r + 30 * sh);
+        g = clamp255(g + 10 * sh);
+        b = clamp255(b - 34 * sh);
+
+        // Push saturation for that iconic hot yellow/orange look.
+        const s = 1 + 0.9 * t;
+        r = clamp255(lm + (r - lm) * s);
+        g = clamp255(lm + (g - lm) * s);
+        b = clamp255(lm + (b - lm) * s);
+
+        // Extra channel bias to keep blue channel suppressed.
+        b = clamp255(b * (1 - 0.22 * t));
+
+        // More punch with reduced exposure lift to avoid clipping highs.
+        const c = 1 + 0.16 * t;
+        const br = 1 + 0.05 * t;
+        r = clamp255(((r - 128) * c + 128) * br);
+        g = clamp255(((g - 128) * c + 128) * br);
+        b = clamp255(((b - 128) * c + 128) * br);
+
+        // Highlight rolloff: preserve texture in bright regions.
+        const hi = Math.max(0, (bright - 0.72) / 0.28) * t;
+        if (hi > 0) {
+          const cap = 238;
+          const keep = 0.52 * hi;
+          r = clamp255(r * (1 - keep) + Math.min(r, cap - 2) * keep);
+          g = clamp255(g * (1 - keep) + Math.min(g, cap - 14) * keep);
+          b = clamp255(b * (1 - keep) + Math.min(b, cap - 30) * keep);
+        }
+
+        // Built-in atmospheric haze that scales with intensity.
+        const haze = 0.16 * t;
+        const hazeSat = 1 - 0.12 * t;
+        const hlm = 0.299*r + 0.587*g + 0.114*b;
+        r = clamp255((hlm + (r - hlm) * hazeSat) * (1 - haze) + 236 * haze);
+        g = clamp255((hlm + (g - hlm) * hazeSat) * (1 - haze) + 206 * haze);
+        b = clamp255((hlm + (b - hlm) * hazeSat) * (1 - haze) + 154 * haze);
+
+        // Intensity-linked tonal shaping:
+        // dim highlights and deepen shadows as intensity rises.
+        const lm2 = 0.299*r + 0.587*g + 0.114*b;
+        const hiW = Math.max(0, (lm2 - 168) / 87);   // 0 in mids, 1 in brightest range
+        const shW = Math.max(0, (122 - lm2) / 122);  // 1 in darks, 0 near mids/highs
+        const hiDim = 1 - 0.38 * t * hiW;
+        const shDim = 1 - 0.28 * t * shW;
+        const tone = hiDim * shDim;
+        r = clamp255(r * tone);
+        g = clamp255(g * tone);
+        b = clamp255(b * tone);
+
+        // Extra end-stage contrast to keep the grade punchy.
+        const c2 = 1 + 0.12 * t;
+        r = clamp255((r - 128) * c2 + 128);
+        g = clamp255((g - 128) * c2 + 128);
+        b = clamp255((b - 128) * c2 + 128);
+
+        data[i]   = r;
+        data[i+1] = g;
+        data[i+2] = b;
       }
     },
   },
@@ -699,6 +811,8 @@ function showUpload() {
   if (vignetteEl) vignetteEl.style.display = 'none';
   if (solarpunkEl) solarpunkEl.style.display = 'none';
   if (hegsethEl) hegsethEl.style.display = 'none';
+  if (mexicoEl) mexicoEl.style.display = 'none';
+  if (finalPreviewEl) finalPreviewEl.style.display = 'none';
   filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
   filterIntensityRow.classList.add('hidden');
   filterLayerRow.classList.add('hidden');
@@ -1311,6 +1425,13 @@ function rgbToHex(r, g, b) {
   }).join('')}`;
 }
 
+function resolveFontFamilyStack(fontFamily) {
+  const m = /^\s*var\((--[^),\s]+)\)\s*$/.exec(fontFamily || '');
+  if (!m) return fontFamily;
+  const resolved = getComputedStyle(document.documentElement).getPropertyValue(m[1]).trim();
+  return resolved || fontFamily;
+}
+
 function renderFilteredPreviewToContrastCanvas() {
   const w = baseImage.offsetWidth || 0;
   const h = baseImage.offsetHeight || 0;
@@ -1321,15 +1442,11 @@ function renderFilteredPreviewToContrastCanvas() {
   const name = state.filter.name;
   ctx.clearRect(0, 0, w, h);
 
-  if (name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk' && name !== 'hegseth') {
-    ctx.filter = FILTERS[name].cssPreview(t, state.filter.params);
-  } else {
-    ctx.filter = 'none';
-  }
+  ctx.filter = 'none';
   ctx.drawImage(baseImage, 0, 0, w, h);
   ctx.filter = 'none';
 
-  if (name === 'vaporwave' || name === 'solarpunk' || name === 'hegseth') {
+  if (name !== 'none') {
     const px = ctx.getImageData(0, 0, w, h);
     FILTERS[name].apply(px.data, w, h, t, state.filter.params);
     ctx.putImageData(px, 0, 0);
@@ -1624,6 +1741,8 @@ let chromaEl   = null;
 let vignetteEl = null;
 let solarpunkEl = null;
 let hegsethEl = null;
+let mexicoEl = null;
+let finalPreviewEl = null;
 let vaporSrcCanvas = null;
 let vaporSrcCtx    = null;
 let grainBuffer    = null;
@@ -1643,9 +1762,12 @@ function updateOverlayLayering(el) {
   el.style.zIndex = state.filter.applyOnTop ? '30' : 'auto';
 }
 
+function isPixelPreviewFilter(name) {
+  return name !== 'none';
+}
+
 function syncTextFieldLayering() {
-  const onTopPixelFilter = state.filter.applyOnTop &&
-    (state.filter.name === 'vaporwave' || state.filter.name === 'solarpunk' || state.filter.name === 'hegseth');
+  const onTopPixelFilter = state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
   for (const tf of state.textFields) {
     tf.el.style.zIndex = (onTopPixelFilter && state.selectedField === tf) ? '40' : 'auto';
   }
@@ -1679,7 +1801,8 @@ function drawPreviewTextLayers(ctx, w, h) {
                s.align === 'right' ? cx + elHalfW :
                cx;
 
-    ctx.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${s.font}`;
+    const resolvedFontFamily = resolveFontFamilyStack(s.font);
+    ctx.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${resolvedFontFamily}`;
     ctx.textAlign = s.align;
     ctx.textBaseline = 'middle';
     ctx.filter = s.blur > 0 ? `blur(${(s.blur * previewScale).toFixed(3)}px)` : 'none';
@@ -1925,35 +2048,120 @@ function updateHegsethOverlay() {
   hc.putImageData(previewData, 0, 0);
 }
 
-function applyImageFilter() {
-  const name = state.filter.name;
-  const t = state.filter.intensity / 100;
+function updateMexicoOverlay() {
+  if (state.filter.name !== 'mexico') {
+    if (mexicoEl) mexicoEl.style.display = 'none';
+    return;
+  }
+  if (!mexicoEl) mexicoEl = makeOverlayCanvas();
+  updateOverlayLayering(mexicoEl);
+  mexicoEl.style.mixBlendMode = 'normal';
 
-  // Keep image preview path identical regardless of layer mode.
-  canvasContainer.style.filter = '';
-  if (name === 'none') {
-    baseImage.style.filter = '';
-  } else if (name === 'vaporwave' || name === 'solarpunk' || name === 'hegseth') {
-    baseImage.style.filter = '';
-  } else {
-    baseImage.style.filter = FILTERS[name].cssPreview(t, state.filter.params);
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  const t = state.filter.intensity / 100;
+  if (t === 0) {
+    mexicoEl.style.display = 'none';
+    return;
   }
 
-  // When "on top" is enabled, approximate export behavior by preview-filtering
-  // text fields in-place while leaving image rendering unchanged.
-  const textFilter = (state.filter.applyOnTop && name !== 'none' && name !== 'vaporwave' && name !== 'solarpunk' && name !== 'hegseth')
-    ? FILTERS[name].cssPreview(t, state.filter.params)
-    : '';
+  mexicoEl.width = w;
+  mexicoEl.height = h;
+  mexicoEl.style.display = '';
+  mexicoEl.style.opacity = '1';
+
+  if (!vaporSrcCanvas) {
+    vaporSrcCanvas = document.createElement('canvas');
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
+  }
+  if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
+    vaporSrcCanvas.width = w;
+    vaporSrcCanvas.height = h;
+  }
+  vaporSrcCtx.clearRect(0, 0, w, h);
+  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  if (state.filter.applyOnTop) {
+    drawPreviewTextLayers(vaporSrcCtx, w, h);
+  }
+  const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
+  FILTERS.mexico.apply(
+    previewData.data,
+    w,
+    h,
+    t,
+    state.filter.params
+  );
+  const mc = mexicoEl.getContext('2d');
+  mc.putImageData(previewData, 0, 0);
+}
+
+function hideLegacyFilterOverlays() {
+  if (grainEl) grainEl.style.display = 'none';
+  if (scanlineEl) scanlineEl.style.display = 'none';
+  if (chromaEl) chromaEl.style.display = 'none';
+  if (vignetteEl) vignetteEl.style.display = 'none';
+  if (solarpunkEl) solarpunkEl.style.display = 'none';
+  if (hegsethEl) hegsethEl.style.display = 'none';
+  if (mexicoEl) mexicoEl.style.display = 'none';
+}
+
+function updateFinalFilterPreviewOverlay() {
+  const name = state.filter.name;
+  if (name === 'none') {
+    if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+    return;
+  }
+  if (!finalPreviewEl) finalPreviewEl = makeOverlayCanvas();
+  updateOverlayLayering(finalPreviewEl);
+  finalPreviewEl.style.mixBlendMode = 'normal';
+
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  const t = state.filter.intensity / 100;
+
+  finalPreviewEl.width = w;
+  finalPreviewEl.height = h;
+  finalPreviewEl.style.display = '';
+  finalPreviewEl.style.opacity = '1';
+
+  if (!vaporSrcCanvas) {
+    vaporSrcCanvas = document.createElement('canvas');
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
+  }
+  if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
+    vaporSrcCanvas.width = w;
+    vaporSrcCanvas.height = h;
+  }
+  vaporSrcCtx.clearRect(0, 0, w, h);
+  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  if (state.filter.applyOnTop) {
+    drawPreviewTextLayers(vaporSrcCtx, w, h);
+  }
+  const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
+  FILTERS[name].apply(
+    previewData.data,
+    w,
+    h,
+    t,
+    state.filter.params
+  );
+  const pc = finalPreviewEl.getContext('2d');
+  pc.putImageData(previewData, 0, 0);
+}
+
+function applyImageFilter() {
+  const name = state.filter.name;
+  canvasContainer.style.filter = '';
+  baseImage.style.filter = '';
+
+  // Unified preview pipeline: never CSS-filter text fields directly.
+  const textFilter = '';
   for (const tf of state.textFields) {
     tf.el.style.filter = isTextFilterBypassed(tf) ? '' : textFilter;
   }
   syncTextFieldLayering();
-  updateGrainOverlay();
-  updateScanlineOverlay();
-  updateChromaOverlay();
-  updateVignetteOverlay();
-  updateSolarpunkOverlay();
-  updateHegsethOverlay();
+  hideLegacyFilterOverlays();
+  updateFinalFilterPreviewOverlay();
 }
 
 let _filterRenderRaf = 0;
@@ -2209,7 +2417,8 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
 
     // size is % of image width; apply directly against natural image width
     const fontSize = s.size / 100 * nw;
-    ctx.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${s.font}`;
+    const resolvedFontFamily = resolveFontFamilyStack(s.font);
+    ctx.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${resolvedFontFamily}`;
     ctx.textAlign = s.align;
     ctx.textBaseline = 'middle';
 

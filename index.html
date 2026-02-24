@@ -109,21 +109,21 @@
           <span class="control-label">Typeface</span>
           <div class="typeface-row">
             <select id="ctrl-font" class="native-font-select" aria-hidden="true" tabindex="-1">
-              <option value="'Helvetica Neue', Helvetica, sans-serif"        style="font-family:'Helvetica Neue',Helvetica,sans-serif">Helvetica</option>
-              <option value="Georgia, 'Times New Roman', serif"              style="font-family:Georgia,'Times New Roman',serif">Georgia</option>
-              <option value="'Times New Roman', Times, serif"                style="font-family:'Times New Roman',Times,serif">Times New Roman</option>
-              <option value="'Palatino Linotype', Palatino, serif"           style="font-family:'Palatino Linotype',Palatino,serif">Palatino</option>
-              <option value="'Garamontio', 'EB Garamond', Garamond, serif" style="font-family:'Garamontio','EB Garamond',Garamond,serif">Garamontio</option>
-              <option value="'GaramontioSans', 'Saira', sans-serif"          style="font-family:'GaramontioSans','Saira',sans-serif">Garamontio Sans</option>
-              <option value="'Baskerville', 'Libre Baskerville', serif"      style="font-family:Baskerville,'Libre Baskerville',serif">Baskerville</option>
-              <option value="'Futura', 'Century Gothic', sans-serif"         style="font-family:Futura,'Century Gothic',sans-serif">Futura</option>
-              <option value="'Gill Sans', 'Gill Sans MT', sans-serif"        style="font-family:'Gill Sans','Gill Sans MT',sans-serif">Gill Sans</option>
-              <option value="Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" style="font-family:Impact,Haettenschweiler,'Arial Narrow Bold',sans-serif">Impact</option>
-              <option value="'Courier New', Courier, monospace"              style="font-family:'Courier New',Courier,monospace">Courier</option>
-              <option value="'CoralPixels', sans-serif"                      style="font-family:'CoralPixels',sans-serif">Coral Pixels</option>
-              <option value="'Handjet', sans-serif"                          style="font-family:'Handjet',sans-serif">Handjet</option>
-              <option value="'PressStart2P', monospace"                      style="font-family:'PressStart2P',monospace">Press Start 2P</option>
-              <option value="'Silkscreen', monospace"                        style="font-family:'Silkscreen',monospace">Silkscreen</option>
+              <option value="var(--font-helvetica)"       style="font-family:var(--font-helvetica)">Helvetica</option>
+              <option value="var(--font-georgia)"         style="font-family:var(--font-georgia)">Georgia</option>
+              <option value="var(--font-times)"           style="font-family:var(--font-times)">Times New Roman</option>
+              <option value="var(--font-palatino)"        style="font-family:var(--font-palatino)">Palatino</option>
+              <option value="var(--font-garamontio)"      style="font-family:var(--font-garamontio)">Garamontio</option>
+              <option value="var(--font-garamontio-sans)" style="font-family:var(--font-garamontio-sans)">Garamontio Sans</option>
+              <option value="var(--font-baskerville)"     style="font-family:var(--font-baskerville)">Baskerville</option>
+              <option value="var(--font-futura)"          style="font-family:var(--font-futura)">Futura</option>
+              <option value="var(--font-gill-sans)"       style="font-family:var(--font-gill-sans)">Gill Sans</option>
+              <option value="var(--font-impact)"          style="font-family:var(--font-impact)">Impact</option>
+              <option value="var(--font-courier)"         style="font-family:var(--font-courier)">Courier</option>
+              <option value="var(--font-coral-pixels)"    style="font-family:var(--font-coral-pixels)">Coral Pixels</option>
+              <option value="var(--font-handjet)"         style="font-family:var(--font-handjet)">Handjet</option>
+              <option value="var(--font-press-start)"     style="font-family:var(--font-press-start)">Press Start 2P</option>
+              <option value="var(--font-silkscreen)"      style="font-family:var(--font-silkscreen)">Silkscreen</option>
             </select>
             <div id="ctrl-font-wrap" class="font-select">
               <button
@@ -225,6 +225,8 @@
             <button class="filter-chip active" data-filter="none">None</button>
             <button class="filter-chip" data-filter="film">35mm</button>
             <button class="filter-chip" data-filter="noir">Noir</button>
+            <button class="filter-chip" data-filter="twilight">Twilight</button>
+            <button class="filter-chip" data-filter="mexico">Mexico</button>
             <button class="filter-chip" data-filter="darkAcademia">Dark Academia</button>
             <button class="filter-chip" data-filter="vaporwave">Vaporwave</button>
             <button class="filter-chip" data-filter="solarpunk">Solarpunk</button>
