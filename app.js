@@ -2582,6 +2582,18 @@ async function copyImageToClipboard() {
   throw lastError || new Error('Clipboard image copy failed.');
 }
 
+async function getClipboardWritePermissionState() {
+  if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
+    return 'unknown';
+  }
+  try {
+    const result = await navigator.permissions.query({ name: 'clipboard-write' });
+    return result?.state || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function handleSaveAction() {
   try {
     const status = await exportImage();
@@ -2604,10 +2616,32 @@ async function handleSaveAction() {
 }
 
 async function handleCopyAction() {
+  if (!window.isSecureContext) {
+    showHintMessage('Copy requires HTTPS (or localhost).');
+    return;
+  }
+  const permissionState = await getClipboardWritePermissionState();
+  if (permissionState === 'denied') {
+    showHintMessage('Clipboard access denied by browser settings.');
+    return;
+  }
   try {
     await copyImageToClipboard();
     showHintMessage('Copied image');
   } catch (err) {
+    const isNotAllowed = err?.name === 'NotAllowedError';
+    const isIOS = /iP(ad|hone|od)/i.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isNotAllowed && isIOS) {
+      try {
+        const blob = await renderCurrentImageBlob({ mime: 'image/jpeg', quality: 0.93 });
+        showRenderedPreviewOverlay(blob, { iosSaveMode: true });
+        showHintMessage('Clipboard blocked on iOS; opened save preview.');
+        return;
+      } catch {
+        // Fall through to generic error hint if preview render fails.
+      }
+    }
     showHintMessage(err?.message || 'Copy failed');
   }
 }
