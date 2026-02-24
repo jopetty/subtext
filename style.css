@@ -817,6 +817,19 @@ input[type="range"]::-moz-range-thumb {
   height: 28px;
 }
 
+.vibe-layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.vibe-layer-toggle input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
 /* ── Section heading rows ── */
 
 .section-heading-row {

@@ -18,7 +18,7 @@ const state = {
   lastStyle: null,       // style copied from last-edited field (for new field defaults)
   lastPreset: 'classic', // preset name of last-edited field (or null if manually edited)
   dragState: null,       // { field, startX, startY, origLeft, origTop }
-  filter: { name: 'none', intensity: 75, params: {} },
+  filter: { name: 'none', intensity: 75, params: {}, applyOnTop: false },
 };
 
 // Preset styles
@@ -54,7 +54,7 @@ const PRESETS = {
     fgColor:      '#ffcce6',
     outlineColor: '#9656f0',
     outlineWidth: 7,
-    blur:         0,
+    blur:         0.15,
   },
   darkAcademia: {
     font:         "'Garamond', 'EB Garamond', 'GaramondIO', serif",
@@ -453,6 +453,10 @@ async function normalizeUploadImage(file) {
   }
 
   const inputType = (inputBlob.type || '').toLowerCase();
+  if (inputType === 'image/gif') {
+    setUploadBusy(true, 'Animated GIF detected; using first frame...');
+    return await convertBlobToJpeg(inputBlob, 0.93);
+  }
   if (convertedFromHeic || inputType !== 'image/jpeg') {
     return await convertBlobToJpeg(inputBlob, 0.93);
   }
@@ -569,7 +573,8 @@ function showUpload() {
   baseImage.style.height = '';
   deselectAll();
   // Reset filter
-  state.filter = { name: 'none', intensity: 75, params: {} };
+  state.filter = { name: 'none', intensity: 75, params: {}, applyOnTop: false };
+  canvasContainer.style.filter = '';
   baseImage.style.filter = '';
   if (grainEl) grainEl.style.display = 'none';
   if (scanlineEl) scanlineEl.style.display = 'none';
@@ -577,10 +582,12 @@ function showUpload() {
   if (vignetteEl) vignetteEl.style.display = 'none';
   filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
   filterIntensityRow.classList.add('hidden');
+  filterLayerRow.classList.add('hidden');
   filterFilmControls.classList.add('hidden');
   filterVaporControls.classList.add('hidden');
   filterDarkAcadControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
+  ctrlFilterOnTop.checked = false;
   if (_filterRenderRaf) {
     cancelAnimationFrame(_filterRenderRaf);
     _filterRenderRaf = 0;
@@ -710,6 +717,9 @@ class TextField {
   _applyStyle() {
     const s = this.style;
     const inner = this.innerEl;
+    const previewScale = (baseImage.offsetWidth > 0)
+      ? (state.imageNaturalW / baseImage.offsetWidth)
+      : 1;
 
     // size is stored as % of image width; convert to pixels against the
     // current rendered container width so text is always image-proportional.
@@ -723,7 +733,7 @@ class TextField {
     inner.style.color         = s.fgColor;
 
     // Blur (defocus) effect
-    inner.style.filter = s.blur > 0 ? `blur(${s.blur}px)` : '';
+    inner.style.filter = s.blur > 0 ? `blur(${(s.blur * previewScale).toFixed(3)}px)` : '';
 
     // Text outline using -webkit-text-stroke
     if (s.outlineWidth > 0) {
@@ -853,6 +863,8 @@ function addTextField(xPct, yPct) {
   tf.el.classList.add('selected'); // show as selected immediately
   updatePanel();                   // show controls immediately
   loadFieldStyle(tf);
+  // Ensure layer-mode filter preview is applied to newly created text fields.
+  applyImageFilter();
   setTimeout(() => tf.innerEl.focus(), 30);
   return tf;
 }
@@ -878,6 +890,8 @@ function selectField(tf) {
   }
   state.selectedField = tf;
   tf.select();
+  syncTextFieldLayering();
+  scheduleImageFilterRender();
   loadFieldStyle(tf);
   updatePanel();
 }
@@ -889,6 +903,8 @@ function deselectAll() {
     state.selectedField.deselect();
     state.selectedField = null;
   }
+  syncTextFieldLayering();
+  scheduleImageFilterRender();
   updatePanel();
 }
 
@@ -1140,7 +1156,9 @@ ctrlBlur.addEventListener('input', () => {
 
 const filterChips          = document.querySelectorAll('.filter-chip');
 const filterIntensityRow   = document.getElementById('filter-intensity-row');
+const filterLayerRow       = document.getElementById('filter-layer-row');
 const ctrlFilterIntensity  = document.getElementById('ctrl-filter-intensity');
+const ctrlFilterOnTop      = document.getElementById('ctrl-filter-on-top');
 const filterFilmControls   = document.getElementById('filter-film-controls');
 const filterVaporControls  = document.getElementById('filter-vaporwave-controls');
 const filterDarkAcadControls = document.getElementById('filter-darkacademia-controls');
@@ -1174,6 +1192,66 @@ function makeOverlayCanvas() {
   return el;
 }
 
+function updateOverlayLayering(el) {
+  if (!el) return;
+  el.style.zIndex = state.filter.applyOnTop ? '30' : 'auto';
+}
+
+function syncTextFieldLayering() {
+  const onTopVaporwave = state.filter.applyOnTop && state.filter.name === 'vaporwave';
+  for (const tf of state.textFields) {
+    tf.el.style.zIndex = (onTopVaporwave && state.selectedField === tf) ? '40' : 'auto';
+  }
+}
+
+function isTextFilterBypassed(tf) {
+  return state.filter.applyOnTop && state.selectedField === tf;
+}
+
+function drawPreviewTextLayers(ctx, w, h) {
+  const previewScale = (baseImage.offsetWidth > 0)
+    ? (state.imageNaturalW / baseImage.offsetWidth)
+    : 1;
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const imgRect = baseImage.getBoundingClientRect();
+  const imgOffsetX = imgRect.left - containerRect.left;
+  const imgOffsetY = imgRect.top  - containerRect.top;
+
+  for (const tf of state.textFields) {
+    if (isTextFilterBypassed(tf)) continue;
+    const s = tf.style;
+    const cx = tf.xPct * canvasContainer.offsetWidth  - imgOffsetX;
+    const cy = tf.yPct * canvasContainer.offsetHeight - imgOffsetY;
+    const fontSize = s.size / 100 * w;
+    const lines = tf.innerEl.innerText.split('\n');
+    const lineHeight = fontSize * 1.2;
+    const totalH = lines.length * lineHeight;
+    const startY = cy - totalH / 2 + lineHeight / 2;
+    const elHalfW = tf.innerEl.offsetWidth / 2;
+    const lx = s.align === 'left'  ? cx - elHalfW :
+               s.align === 'right' ? cx + elHalfW :
+               cx;
+
+    ctx.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${s.font}`;
+    ctx.textAlign = s.align;
+    ctx.textBaseline = 'middle';
+    ctx.filter = s.blur > 0 ? `blur(${(s.blur * previewScale).toFixed(3)}px)` : 'none';
+
+    lines.forEach((line, i) => {
+      const ly = startY + i * lineHeight;
+      if (s.outlineWidth > 0) {
+        ctx.lineWidth = s.outlineWidth;
+        ctx.strokeStyle = s.outlineColor;
+        ctx.lineJoin = 'round';
+        ctx.strokeText(line, lx, ly);
+      }
+      ctx.fillStyle = s.fgColor;
+      ctx.fillText(line, lx, ly);
+    });
+    ctx.filter = 'none';
+  }
+}
+
 function updateGrainOverlay() {
   const isDark = state.filter.name === 'darkAcademia';
   const isFilm = state.filter.name === 'film';
@@ -1185,6 +1263,7 @@ function updateGrainOverlay() {
     grainEl = makeOverlayCanvas();
     grainEl.style.mixBlendMode = 'overlay';
   }
+  updateOverlayLayering(grainEl);
   const grainT   = (state.filter.params.grain ?? (isDark ? 45 : 50)) / 100;
   const t        = state.filter.intensity / 100;
   // Film grain is intentionally independent of intensity in export. Dark
@@ -1230,6 +1309,7 @@ function updateVignetteOverlay() {
   const vigT = (state.filter.params.vignette ?? 65) / 100;
   const t    = state.filter.intensity / 100;
   if (!vignetteEl) vignetteEl = makeOverlayCanvas();
+  updateOverlayLayering(vignetteEl);
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
   vignetteEl.width         = w;
@@ -1256,6 +1336,7 @@ function updateChromaOverlay() {
     return;
   }
   if (!chromaEl) chromaEl = makeOverlayCanvas();
+  updateOverlayLayering(chromaEl);
   chromaEl.style.mixBlendMode = 'normal';
 
   const w = baseImage.offsetWidth  || 1;
@@ -1283,7 +1364,11 @@ function updateChromaOverlay() {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
   }
+  vaporSrcCtx.clearRect(0, 0, w, h);
   vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  if (state.filter.applyOnTop) {
+    drawPreviewTextLayers(vaporSrcCtx, w, h);
+  }
   const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
   FILTERS.vaporwave.apply(
     previewData.data,
@@ -1298,12 +1383,28 @@ function updateChromaOverlay() {
 }
 
 function applyImageFilter() {
-  if (state.filter.name === 'none' || state.filter.name === 'vaporwave') {
+  const name = state.filter.name;
+  const t = state.filter.intensity / 100;
+
+  // Keep image preview path identical regardless of layer mode.
+  canvasContainer.style.filter = '';
+  if (name === 'none') {
+    baseImage.style.filter = '';
+  } else if (name === 'vaporwave') {
     baseImage.style.filter = '';
   } else {
-    const t = state.filter.intensity / 100;
-    baseImage.style.filter = FILTERS[state.filter.name].cssPreview(t);
+    baseImage.style.filter = FILTERS[name].cssPreview(t);
   }
+
+  // When "on top" is enabled, approximate export behavior by preview-filtering
+  // text fields in-place while leaving image rendering unchanged.
+  const textFilter = (state.filter.applyOnTop && name !== 'none' && name !== 'vaporwave')
+    ? FILTERS[name].cssPreview(t)
+    : '';
+  for (const tf of state.textFields) {
+    tf.el.style.filter = isTextFilterBypassed(tf) ? '' : textFilter;
+  }
+  syncTextFieldLayering();
   updateGrainOverlay();
   updateScanlineOverlay();
   updateChromaOverlay();
@@ -1324,9 +1425,11 @@ function updateVibeExtraControls() {
   const name = state.filter.name;
   const isNone = name === 'none';
   filterIntensityRow.classList.toggle('hidden', isNone);
+  filterLayerRow.classList.toggle('hidden', isNone);
   filterFilmControls.classList.toggle('hidden', name !== 'film');
   filterVaporControls.classList.toggle('hidden', name !== 'vaporwave');
   filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
+  ctrlFilterOnTop.checked = !!state.filter.applyOnTop;
 }
 
 filterChips.forEach(chip => {
@@ -1354,6 +1457,11 @@ filterChips.forEach(chip => {
 
 ctrlFilterIntensity.addEventListener('input', () => {
   state.filter.intensity = parseInt(ctrlFilterIntensity.value);
+  scheduleImageFilterRender();
+});
+
+ctrlFilterOnTop.addEventListener('change', () => {
+  state.filter.applyOnTop = ctrlFilterOnTop.checked;
   scheduleImageFilterRender();
 });
 
@@ -1483,41 +1591,24 @@ function softBlur(ctx, w, h, radius) {
   ctx.putImageData(id, 0, 0);
 }
 
-async function renderCurrentImageBlob() {
-  const img = baseImage;
-  const nw = state.imageNaturalW;
-  const nh = state.imageNaturalH;
+function applyActiveFilterToContext(ctx, w, h, pixelScale) {
+  if (state.filter.name === 'none') return;
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const scaleForFilter = state.filter.name === 'vaporwave' ? pixelScale : 1;
+  FILTERS[state.filter.name].apply(
+    imgData.data,
+    w,
+    h,
+    state.filter.intensity / 100,
+    state.filter.params,
+    scaleForFilter
+  );
+  ctx.putImageData(imgData, 0, 0);
+}
 
-  // Scale factor: natural image pixels vs rendered pixels
-  const renderedW = img.offsetWidth;
-  const renderedH = img.offsetHeight;
-  const scale = nw / renderedW;
-
-  exportCanvas.width  = nw;
-  exportCanvas.height = nh;
-  const ctx = exportCanvas.getContext('2d');
-
-  // Draw base image
-  ctx.drawImage(img, 0, 0, nw, nh);
-
-  // Apply image filter (pixel-level, fully cross-browser)
-  if (state.filter.name !== 'none') {
-    const imgData = ctx.getImageData(0, 0, nw, nh);
-    const pixelScale = state.filter.name === 'vaporwave' ? scale : 1;
-    FILTERS[state.filter.name].apply(
-      imgData.data,
-      nw,
-      nh,
-      state.filter.intensity / 100,
-      state.filter.params,
-      pixelScale
-    );
-    ctx.putImageData(imgData, 0, 0);
-  }
-
-  // Draw each text field
+function drawTextLayersForExport(ctx, nw, nh, scale) {
   const containerRect = canvasContainer.getBoundingClientRect();
-  const imgRect = img.getBoundingClientRect();
+  const imgRect = baseImage.getBoundingClientRect();
   const imgOffsetX = imgRect.left - containerRect.left;
   const imgOffsetY = imgRect.top  - containerRect.top;
 
@@ -1554,7 +1645,6 @@ async function renderCurrentImageBlob() {
                cx;
 
     // Draw text to a temp canvas, optionally software-blur it, then composite.
-    // Using a software blur avoids ctx.filter which isn't supported in Safari < 18.
     tc.clearRect(0, 0, nw, nh);
     tc.font         = ctx.font;
     tc.textAlign    = s.align;
@@ -1579,6 +1669,35 @@ async function renderCurrentImageBlob() {
     }
     ctx.drawImage(tempCanvas, 0, 0);
   }
+}
+
+async function renderCurrentImageBlob() {
+  const img = baseImage;
+  const nw = state.imageNaturalW;
+  const nh = state.imageNaturalH;
+
+  // Scale factor: natural image pixels vs rendered pixels
+  const renderedW = img.offsetWidth;
+  const renderedH = img.offsetHeight;
+  const scale = nw / renderedW;
+
+  exportCanvas.width  = nw;
+  exportCanvas.height = nh;
+  const ctx = exportCanvas.getContext('2d');
+
+  // Draw base image
+  ctx.drawImage(img, 0, 0, nw, nh);
+
+  // Apply filter before text (default behavior) or after text (on-top mode).
+  if (!state.filter.applyOnTop) {
+    applyActiveFilterToContext(ctx, nw, nh, scale);
+  }
+
+  drawTextLayersForExport(ctx, nw, nh, scale);
+
+  if (state.filter.applyOnTop) {
+    applyActiveFilterToContext(ctx, nw, nh, scale);
+  }
 
   const blob = await new Promise(resolve =>
     exportCanvas.toBlob(resolve, 'image/jpeg', 0.93)
@@ -1589,6 +1708,8 @@ async function renderCurrentImageBlob() {
 
 async function exportImage() {
   const blob = await renderCurrentImageBlob();
+  const mime = 'image/jpeg';
+  const ext = 'jpg';
 
   // Platform detection.
   // maxTouchPoints > 0 would catch Mac trackpads on newer macOS too, so be specific.
@@ -1598,7 +1719,7 @@ async function exportImage() {
 
   if (isIOS) {
     // iOS: Web Share API is the one-tap path to Photos (iOS 15+, requires HTTPS).
-    const file = new File([blob], 'subtext.jpg', { type: 'image/jpeg' });
+    const file = new File([blob], `subtext.${ext}`, { type: mime });
     if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file] });
@@ -1616,14 +1737,14 @@ async function exportImage() {
   // Android + Desktop: standard download link (<a download> works on both).
   // On Android this saves to the gallery/downloads folder directly.
   // On desktop we append a short hash so repeated exports have unique filenames.
-  let filename = 'subtext.jpg';
+  let filename = `subtext.${ext}`;
   if (!isAndroid) {
     const buffer    = await blob.arrayBuffer();
     const hashBytes = await crypto.subtle.digest('SHA-256', buffer);
     const hex       = Array.from(new Uint8Array(hashBytes))
                         .map(b => b.toString(16).padStart(2, '0'))
                         .join('');
-    filename = `subtext-${hex.slice(0, 6)}.jpg`;
+    filename = `subtext-${hex.slice(0, 6)}.${ext}`;
   }
 
   const url = URL.createObjectURL(blob);
@@ -1674,6 +1795,11 @@ function showRenderedPreviewOverlay(blob, opts = {}) {
 
   const img = document.createElement('img');
   img.src   = url;
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === img) return;
+    closeRenderedPreviewOverlay();
+  });
 
   const btn = document.createElement('button');
   btn.textContent = 'Done';
