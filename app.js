@@ -493,6 +493,7 @@ const editorScreen   = document.getElementById('editor-screen');
 const fileInput      = document.getElementById('file-input');
 const backBtn        = document.getElementById('back-btn');
 const exportBtn      = document.getElementById('export-btn');
+const copyBtn        = document.getElementById('copy-btn');
 const baseImage      = document.getElementById('base-image');
 const canvasWrapper   = document.getElementById('canvas-wrapper');
 const canvasContainer = document.getElementById('canvas-container');
@@ -738,8 +739,14 @@ function dismissHint() {
   if (!canvasHint || canvasHint.classList.contains('hidden')) return;
   canvasHint.classList.add('hidden');
   clearTimeout(_hintTimer);
-  // Remove from layout after fade completes so it can't interfere
-  canvasHint.addEventListener('transitionend', () => canvasHint.remove(), { once: true });
+}
+
+function showHintMessage(message, durationMs = 1300) {
+  if (!canvasHint) return;
+  canvasHint.textContent = message;
+  canvasHint.classList.remove('hidden');
+  clearTimeout(_hintTimer);
+  _hintTimer = setTimeout(dismissHint, durationMs);
 }
 
 function fitImageToWrapper() {
@@ -775,11 +782,7 @@ function showEditor() {
     scheduleImageFilterRender();
   });
   // Show the canvas hint and auto-dismiss after 10 s
-  if (canvasHint) {
-    canvasHint.classList.remove('hidden');
-    clearTimeout(_hintTimer);
-    _hintTimer = setTimeout(dismissHint, 10000);
-  }
+  showHintMessage('Double-click image to add text', 10000);
 }
 
 function showUpload() {
@@ -2337,8 +2340,6 @@ presetBtns.forEach(btn => {
 
 // ─── Export / Render ──────────────────────────────────────────────────────────
 
-exportBtn.addEventListener('click', exportImage);
-
 // 3-pass separable box blur — O(n) per pass, good Gaussian approximation.
 // Works on any browser without ctx.filter support (e.g. Safari < 18).
 function softBlur(ctx, w, h, radius) {
@@ -2470,7 +2471,11 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
   }
 }
 
-async function renderCurrentImageBlob() {
+async function renderCurrentImageBlob(options = {}) {
+  const {
+    mime = 'image/jpeg',
+    quality = 0.93,
+  } = options;
   const img = baseImage;
   const nw = state.imageNaturalW;
   const nh = state.imageNaturalH;
@@ -2499,14 +2504,14 @@ async function renderCurrentImageBlob() {
   }
 
   const blob = await new Promise(resolve =>
-    exportCanvas.toBlob(resolve, 'image/jpeg', 0.93)
+    exportCanvas.toBlob(resolve, mime, quality)
   );
-  if (!blob) throw new Error('Failed to render JPEG');
+  if (!blob) throw new Error(`Failed to render ${mime} image`);
   return blob;
 }
 
 async function exportImage() {
-  const blob = await renderCurrentImageBlob();
+  const blob = await renderCurrentImageBlob({ mime: 'image/jpeg', quality: 0.93 });
   const mime = 'image/jpeg';
   const ext = 'jpg';
 
@@ -2522,15 +2527,15 @@ async function exportImage() {
     if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file] });
-        return;
+        return 'shared';
       } catch (e) {
-        if (e.name === 'AbortError') return; // user dismissed
+        if (e.name === 'AbortError') return 'cancelled'; // user dismissed
         // Share failed for another reason — fall through to overlay
       }
     }
     // Older iOS / non-Safari fallback: show the image so the user can save it.
     showRenderedPreviewOverlay(blob, { iosSaveMode: true });
-    return;
+    return 'overlay';
   }
 
   // Android + Desktop: standard download link (<a download> works on both).
@@ -2552,6 +2557,59 @@ async function exportImage() {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return 'downloaded';
+}
+
+async function copyImageToClipboard() {
+  if (!navigator.clipboard || typeof window.ClipboardItem === 'undefined') {
+    throw new Error('Clipboard image copy is not supported on this browser.');
+  }
+  const clipboardTypes = ['image/png', 'image/jpeg'];
+  let lastError = null;
+  for (const type of clipboardTypes) {
+    try {
+      const blob = await renderCurrentImageBlob({
+        mime: type,
+        quality: type === 'image/jpeg' ? 0.93 : undefined,
+      });
+      const item = new ClipboardItem({ [blob.type]: blob });
+      await navigator.clipboard.write([item]);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error('Clipboard image copy failed.');
+}
+
+async function handleSaveAction() {
+  try {
+    const status = await exportImage();
+    if (status === 'cancelled') {
+      showHintMessage('Save cancelled');
+      return;
+    }
+    if (status === 'overlay') {
+      showHintMessage('Opened save preview');
+      return;
+    }
+    if (status === 'shared') {
+      showHintMessage('Shared image');
+      return;
+    }
+    showHintMessage('Saved image');
+  } catch {
+    showHintMessage('Save failed');
+  }
+}
+
+async function handleCopyAction() {
+  try {
+    await copyImageToClipboard();
+    showHintMessage('Copied image');
+  } catch (err) {
+    showHintMessage(err?.message || 'Copy failed');
+  }
 }
 
 function showRenderedPreviewOverlay(blob, opts = {}) {
@@ -2632,10 +2690,17 @@ initGuides();
 buildFontDropdown();
 syncFontSelectDisplay();
 switchPanelTab('typography'); // set initial data-panel attribute
+exportBtn.addEventListener('click', handleSaveAction);
+copyBtn.addEventListener('click', handleCopyAction);
 
 let _previewKeyTapCount = 0;
 let _previewKeyTimer = 0;
 const PREVIEW_KEY_DBL_TAP_MS = 800;
+let _saveKeyTapCount = 0;
+let _saveKeyTimer = 0;
+let _copyKeyTapCount = 0;
+let _copyKeyTimer = 0;
+const ACTION_KEY_DBL_TAP_MS = 800;
 
 window.addEventListener('keydown', async (e) => {
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -2676,6 +2741,60 @@ window.addEventListener('keydown', async (e) => {
   } catch {
     alert('Could not render preview image.');
   }
+});
+
+window.addEventListener('keydown', async (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!editorScreen.classList.contains('active')) return;
+  if (!state.imageLoaded) return;
+  const k = e.key.toLowerCase();
+  if (k !== 's' && k !== 'c') return;
+
+  const active = document.activeElement;
+  if (active?.isContentEditable) {
+    _saveKeyTapCount = 0;
+    _copyKeyTapCount = 0;
+    if (_saveKeyTimer) { clearTimeout(_saveKeyTimer); _saveKeyTimer = 0; }
+    if (_copyKeyTimer) { clearTimeout(_copyKeyTimer); _copyKeyTimer = 0; }
+    return;
+  }
+
+  if (k === 's') {
+    _saveKeyTapCount += 1;
+    if (_saveKeyTapCount < 2) {
+      if (_saveKeyTimer) clearTimeout(_saveKeyTimer);
+      _saveKeyTimer = setTimeout(() => {
+        _saveKeyTapCount = 0;
+        _saveKeyTimer = 0;
+      }, ACTION_KEY_DBL_TAP_MS);
+      return;
+    }
+    _saveKeyTapCount = 0;
+    if (_saveKeyTimer) {
+      clearTimeout(_saveKeyTimer);
+      _saveKeyTimer = 0;
+    }
+    e.preventDefault();
+    await handleSaveAction();
+    return;
+  }
+
+  _copyKeyTapCount += 1;
+  if (_copyKeyTapCount < 2) {
+    if (_copyKeyTimer) clearTimeout(_copyKeyTimer);
+    _copyKeyTimer = setTimeout(() => {
+      _copyKeyTapCount = 0;
+      _copyKeyTimer = 0;
+    }, ACTION_KEY_DBL_TAP_MS);
+    return;
+  }
+  _copyKeyTapCount = 0;
+  if (_copyKeyTimer) {
+    clearTimeout(_copyKeyTimer);
+    _copyKeyTimer = 0;
+  }
+  e.preventDefault();
+  await handleCopyAction();
 });
 
 window.addEventListener('keydown', (e) => {

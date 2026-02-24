@@ -62,9 +62,19 @@
         <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor" aria-hidden="true">
           <path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"/>
         </svg>
+        <span class="top-action-label back-label">Back</span>
       </button>
       <span class="wordmark-small">Subtext</span>
-      <button id="export-btn" class="export-btn" title="Save image">Save</button>
+      <div id="top-actions">
+        <button id="copy-btn" class="icon-btn top-action-btn" title="Copy rendered image to clipboard" aria-label="Copy image">
+          <img src="icons/markdown_paste_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="" aria-hidden="true" />
+          <span class="top-action-label">Copy</span>
+        </button>
+        <button id="export-btn" class="icon-btn top-action-btn" title="Save rendered image" aria-label="Save image">
+          <img src="icons/file_save_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="" aria-hidden="true" />
+          <span class="top-action-label">Save</span>
+        </button>
+      </div>
     </header>
 
     <!-- First-load hint -->
