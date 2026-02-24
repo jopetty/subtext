@@ -760,6 +760,24 @@ function fitImageToWrapper() {
   baseImage.style.height = Math.round(state.imageNaturalH * scale) + 'px';
 }
 
+function getPreviewTextBlurPx(blurAmount, previewScale, opts = {}) {
+  const { forDom = false } = opts;
+  if (!blurAmount || blurAmount <= 0) return 0;
+  // Export uses a 3-pass box blur with an integer kernel radius. That appears
+  // stronger than CSS Gaussian blur at the same numeric radius, so we map the
+  // preview radius to the equivalent Gaussian sigma of the export kernel.
+  const exportRadius = blurAmount * previewScale;
+  const kernelRadius = Math.max(1, Math.round(exportRadius));
+  let px = Math.sqrt(kernelRadius * (kernelRadius + 1));
+  // On mobile Safari/retina, CSS blur on DOM text tends to appear stronger
+  // than canvas-export blur at the same nominal radius.
+  if (forDom && isMobileViewport()) {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    px /= dpr;
+  }
+  return px;
+}
+
 function isMobileViewport() {
   return window.matchMedia('(max-width: 769px)').matches;
 }
@@ -1036,7 +1054,8 @@ class TextField {
     inner.style.color         = s.fgColor;
 
     // Blur (defocus) effect
-    inner.style.filter = s.blur > 0 ? `blur(${(s.blur * previewScale).toFixed(3)}px)` : '';
+    const previewBlur = getPreviewTextBlurPx(s.blur, previewScale, { forDom: true });
+    inner.style.filter = previewBlur > 0 ? `blur(${previewBlur.toFixed(3)}px)` : '';
 
     // Text outline using -webkit-text-stroke
     if (s.outlineWidth > 0) {
@@ -1858,7 +1877,8 @@ function drawPreviewTextLayers(ctx, w, h) {
     ctx.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${resolvedFontFamily}`;
     ctx.textAlign = s.align;
     ctx.textBaseline = 'middle';
-    ctx.filter = s.blur > 0 ? `blur(${(s.blur * previewScale).toFixed(3)}px)` : 'none';
+    const previewBlur = getPreviewTextBlurPx(s.blur, previewScale);
+    ctx.filter = previewBlur > 0 ? `blur(${previewBlur.toFixed(3)}px)` : 'none';
 
     lines.forEach((line, i) => {
       const ly = startY + i * lineHeight;
