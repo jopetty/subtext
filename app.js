@@ -760,6 +760,45 @@ function fitImageToWrapper() {
   baseImage.style.height = Math.round(state.imageNaturalH * scale) + 'px';
 }
 
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 599px)').matches;
+}
+
+function updateMobileTrayHeight() {
+  if (!bottomPanel) return;
+  if (!isMobileViewport()) {
+    bottomPanel.style.height = '';
+    return;
+  }
+
+  const prevTab = bottomPanel.dataset.panel || 'typography';
+  const prevHeight = bottomPanel.style.height;
+  const prevFontFlex = fontControls?.style.flex || '';
+  bottomPanel.dataset.panel = 'typography';
+  bottomPanel.style.height = 'auto';
+  if (fontControls) fontControls.style.flex = 'none';
+
+  const tabsEl = document.getElementById('panel-tabs');
+  const tabsH = tabsEl ? Math.ceil(tabsEl.getBoundingClientRect().height) : 0;
+  const controlsH = fontControls ? Math.ceil(fontControls.scrollHeight) : 0;
+  const computed = getComputedStyle(bottomPanel);
+  const borderTop = parseFloat(computed.borderTopWidth || '0') || 0;
+  const padTop = parseFloat(computed.paddingTop || '0') || 0;
+  const padBottom = parseFloat(computed.paddingBottom || '0') || 0;
+  const total = Math.ceil(
+    borderTop +
+    padTop +
+    tabsH +
+    controlsH +
+    padBottom
+  );
+  bottomPanel.style.height = `${total}px`;
+
+  if (fontControls) fontControls.style.flex = prevFontFlex;
+  bottomPanel.dataset.panel = prevTab;
+  if (!total) bottomPanel.style.height = prevHeight;
+}
+
 function showEditor() {
   uploadScreen.classList.remove('active');
   uploadScreen.classList.remove('drag-over');
@@ -778,6 +817,7 @@ function showEditor() {
   updatePanel();
   // Size image to fill available space after layout is committed
   requestAnimationFrame(() => {
+    updateMobileTrayHeight();
     fitImageToWrapper();
     // Force fresh preview render so pixel-overlay vibes don't show stale image data.
     scheduleImageFilterRender();
@@ -1672,6 +1712,12 @@ function syncFontSelectDisplay() {
 function switchPanelTab(tabName) {
   bottomPanel.dataset.panel = tabName;
   panelTabBtns.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+  requestAnimationFrame(() => {
+    updateMobileTrayHeight();
+    if (state.imageLoaded) {
+      fitImageToWrapper();
+    }
+  });
 }
 
 panelTabBtns.forEach(tab => {
@@ -2887,6 +2933,7 @@ window.addEventListener('resize', () => {
   if (_resizeRaf) return;
   _resizeRaf = requestAnimationFrame(() => {
     _resizeRaf = 0;
+    updateMobileTrayHeight();
     state.textFields.forEach(tf => tf.reposition());
     if (state.imageLoaded) {
       fitImageToWrapper();
@@ -2894,6 +2941,20 @@ window.addEventListener('resize', () => {
     }
   });
 });
+
+if (window.visualViewport) {
+  let _vvResizeRaf = 0;
+  const onVisualViewportChange = () => {
+    if (_vvResizeRaf) return;
+    _vvResizeRaf = requestAnimationFrame(() => {
+      _vvResizeRaf = 0;
+      updateMobileTrayHeight();
+      if (state.imageLoaded) fitImageToWrapper();
+    });
+  };
+  window.visualViewport.addEventListener('resize', onVisualViewportChange);
+  window.visualViewport.addEventListener('scroll', onVisualViewportChange);
+}
 
 // ─── Prevent accidental back/navigation ──────────────────────────────────────
 

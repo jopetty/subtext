@@ -1356,6 +1356,10 @@ input[type="range"]::-moz-range-thumb {
 /* ===== MOBILE — tab-based panel switching ===== */
 
 @media (max-width: 599px) {
+  #base-image {
+    max-height: none;
+  }
+
   /* When the Vibe tab is active, hide Typography and show Vibe */
   #bottom-panel[data-panel="vibe"] #font-controls {
     display: none;
@@ -1391,7 +1395,9 @@ input[type="range"]::-moz-range-thumb {
   /* space-between distributes rows evenly without leading/trailing gaps.
      padding-top provides a consistent, explicit gap below the tab bar. */
   #font-controls {
-    justify-content: space-between;
+    flex: none;
+    justify-content: flex-start;
+    gap: 0.45rem;
     padding-top: 0.4rem;
   }
 
@@ -1399,7 +1405,7 @@ input[type="range"]::-moz-range-thumb {
   #bottom-panel {
     padding-top: 0.2rem;
     padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   #panel-tabs {
@@ -1418,6 +1424,49 @@ input[type="range"]::-moz-range-thumb {
   /* Vibe-extra-controls (scanlines + chroma stacked rows) */
   .vibe-extra-controls {
     gap: 0.45rem;
+  }
+
+  /* Save vertical space: presets scroll horizontally on mobile. */
+  .controls-row--presets {
+    flex-wrap: nowrap;
+  }
+
+  .preset-pills {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    width: 100%;
+  }
+
+  .preset-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .preset-btn {
+    flex: 0 0 auto;
+  }
+
+  .controls-row--filter-chips {
+    flex-wrap: nowrap;
+  }
+
+  .filter-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    width: 100%;
+  }
+
+  .filter-chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .filter-chip {
+    flex: 0 0 auto;
   }
 }
 
