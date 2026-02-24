@@ -11,6 +11,8 @@ const state = {
   imageLoaded: false,
   imageNaturalW: 0,
   imageNaturalH: 0,
+  imageObjectUrl: null,
+  uploadBusy: false,
   textFields: [],        // array of TextField objects
   selectedField: null,   // currently selected TextField or null
   lastStyle: null,       // style copied from last-edited field (for new field defaults)
@@ -141,15 +143,19 @@ const FILTERS = {
 
   vaporwave: {
     label: 'Vaporwave',
-    // CSS preview approximates the color grade; chromatic aberration + scanlines
-    // appear only in the exported image (pixel-level apply below).
+    // Full pixel-level path used in export and in-editor preview overlay.
     cssPreview: (t) =>
       `saturate(${1 + 1.1*t}) hue-rotate(${-28*t}deg) contrast(${1 + 0.3*t}) brightness(${1 - 0.1*t})`,
     apply(data, w, h, t, params, pixelScale = 1) {
       const orig = new Uint8ClampedArray(data);
       const chromaShift = Math.round(30 * (params.chroma ?? 50) / 100 * pixelScale);
+      const sat = 1 + 1.1 * t;
+      const contrast = 1 + 0.3 * t;
+      const scanlinesT = (params.scanlines ?? 60) / 100;
+      const scanlineSize = Math.max(1, Math.round((params.scanlineSize ?? 2) * pixelScale));
 
       for (let y = 0; y < h; y++) {
+        const scan = (y % scanlineSize === 0) ? 1 : Math.max(0, 1 - 0.35 * scanlinesT);
         for (let x = 0; x < w; x++) {
           const i  = (y * w + x) * 4;
 
@@ -165,10 +171,9 @@ const FILTERS = {
           const lm = 0.299*r0 + 0.587*g0 + 0.114*b0;
 
           // Heavy saturation boost
-          const s = 1 + 1.1 * t;
-          r = clamp255(lm + (r - lm) * s);
-          g = clamp255(lm + (g - lm) * s);
-          b = clamp255(lm + (b - lm) * s);
+          r = clamp255(lm + (r - lm) * sat);
+          g = clamp255(lm + (g - lm) * sat);
+          b = clamp255(lm + (b - lm) * sat);
 
           // Color grade: purple/magenta midtones, deep blue shadows, hot-pink highlights
           const bright = lm / 255;
@@ -177,15 +182,11 @@ const FILTERS = {
           b = clamp255(b + (42 - bright * 22) * t);   // strong blue in shadows, less in highlights
 
           // Hard contrast + slight brightness pull-down
-          const c = 1 + 0.3 * t;
-          r = clamp255((r - 128) * c + 128);
-          g = clamp255((g - 128) * c + 128);
-          b = clamp255((b - 128) * c + 128);
+          r = clamp255((r - 128) * contrast + 128);
+          g = clamp255((g - 128) * contrast + 128);
+          b = clamp255((b - 128) * contrast + 128);
 
           // Scanlines — independent param
-          const scanlinesT   = (params.scanlines    ?? 60) / 100;
-          const scanlineSize = Math.max(1, Math.round((params.scanlineSize ?? 2) * pixelScale));
-          const scan = (y % scanlineSize === 0) ? 1 : Math.max(0, 1 - 0.35 * scanlinesT);
           data[i]   = clamp255(r * scan);
           data[i+1] = clamp255(g * scan);
           data[i+2] = clamp255(b * scan);
@@ -288,7 +289,7 @@ const FILTERS = {
 // Default values for vibe-specific extra params
 const FILTER_PARAM_DEFAULTS = {
   film:        { grain: 50 },
-  vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 50 },
+  vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
   darkAcademia: { grain: 45, vignette: 65 },
 };
 
@@ -328,19 +329,178 @@ const ctrlOutlineWidth = document.getElementById('ctrl-outline-width');
 const ctrlOutlineWidthVal = document.getElementById('ctrl-outline-width-val');
 const alignBtns        = document.querySelectorAll('.align-btn');
 const presetBtns       = document.querySelectorAll('.preset-btn');
+const uploadStatus     = document.getElementById('upload-status');
+const uploadStatusText = document.getElementById('upload-status-text');
 
 // ─── Image loading ─────────────────────────────────────────────────────────────
 
+const HEIC_MIME_RE = /^image\/hei(c|f|x|s)$/i;
+const HEIC_EXT_RE  = /\.(hei(c|f|x|s))$/i;
+const IMAGE_EXT_RE = /\.(avif|bmp|gif|heic|heif|heix|heis|jpg|jpeg|jpe|jfif|png|tif|tiff|webp)$/i;
+
+function isHeicLikeFile(file) {
+  const name = file?.name || '';
+  const type = file?.type || '';
+  return HEIC_MIME_RE.test(type) || HEIC_EXT_RE.test(name);
+}
+
+function isLikelyImageFile(file) {
+  if (!file) return false;
+  const type = (file.type || '').toLowerCase();
+  const name = file.name || '';
+  return type.startsWith('image/') || IMAGE_EXT_RE.test(name);
+}
+
+function setUploadBusy(isBusy, message = 'Loading image...') {
+  state.uploadBusy = isBusy;
+  fileInput.disabled = isBusy;
+  if (!uploadStatus || !uploadStatusText) return;
+  uploadStatus.classList.toggle('hidden', !isBusy);
+  uploadStatusText.textContent = message;
+}
+
+function loadImgFromBlob(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Image decode failed'));
+    };
+    img.src = url;
+  });
+}
+
+async function canDecodeBlob(blob) {
+  try {
+    await loadImgFromBlob(blob);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function convertBlobToJpeg(blob, quality = 0.93) {
+  const img = await loadImgFromBlob(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  // JPEG has no alpha channel; composite transparent pixels to white.
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+  const outBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+  if (!outBlob) throw new Error('JPEG conversion failed');
+  return outBlob;
+}
+
+async function convertHeicToJpeg(file) {
+  const failures = [];
+
+  if (typeof window.heic2any === 'function') {
+    try {
+      const converted = await window.heic2any({
+        blob: file,
+        toType: 'image/jpeg',
+        quality: 0.93,
+      });
+      const out = Array.isArray(converted) ? converted[0] : converted;
+      if (out) return out;
+      failures.push('heic2any returned no image data');
+    } catch (err) {
+      failures.push(err?.message || String(err));
+    }
+  }
+
+  if (typeof window.HeicTo === 'function') {
+    try {
+      if (typeof window.HeicTo.isHeic === 'function') {
+        const isHeic = await window.HeicTo.isHeic(file);
+        if (!isHeic) throw new Error('not identified as HEIC by HeicTo');
+      }
+      const out = await window.HeicTo({
+        blob: file,
+        type: 'image/jpeg',
+        quality: 0.93,
+      });
+      if (out) return out;
+      failures.push('HeicTo returned no image data');
+    } catch (err) {
+      failures.push(err?.message || String(err));
+    }
+  }
+
+  throw new Error(`HEIC conversion failed (${failures.join(' | ') || 'no converter available'})`);
+}
+
+async function normalizeUploadImage(file) {
+  let inputBlob = file;
+  let convertedFromHeic = false;
+
+  const directlyDecodable = await canDecodeBlob(file);
+  if (!directlyDecodable) {
+    if (!isHeicLikeFile(file)) {
+      throw new Error('This image format is not supported by your browser.');
+    }
+    setUploadBusy(true, 'Converting image...');
+    inputBlob = await convertHeicToJpeg(file);
+    convertedFromHeic = true;
+  }
+
+  const inputType = (inputBlob.type || '').toLowerCase();
+  if (convertedFromHeic || inputType !== 'image/jpeg') {
+    return await convertBlobToJpeg(inputBlob, 0.93);
+  }
+  return inputBlob;
+}
+
 function loadImageFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  const url = URL.createObjectURL(file);
-  baseImage.onload = () => {
-    state.imageNaturalW = baseImage.naturalWidth;
-    state.imageNaturalH = baseImage.naturalHeight;
-    state.imageLoaded = true;
-    showEditor();
-  };
-  baseImage.src = url;
+  if (!file) return;
+  if (state.uploadBusy) return;
+  if (!isLikelyImageFile(file)) {
+    alert('Please choose an image file.');
+    return;
+  }
+  setUploadBusy(true, 'Loading image...');
+  (async () => {
+    try {
+      const normalizedBlob = await normalizeUploadImage(file);
+      if (state.imageObjectUrl) {
+        URL.revokeObjectURL(state.imageObjectUrl);
+        state.imageObjectUrl = null;
+      }
+      const url = URL.createObjectURL(normalizedBlob);
+      state.imageObjectUrl = url;
+      baseImage.onload = () => {
+        if (state.imageObjectUrl === url) {
+          URL.revokeObjectURL(url);
+          state.imageObjectUrl = null;
+        }
+        setUploadBusy(false);
+        state.imageNaturalW = baseImage.naturalWidth;
+        state.imageNaturalH = baseImage.naturalHeight;
+        state.imageLoaded = true;
+        showEditor();
+      };
+      baseImage.onerror = () => {
+        if (state.imageObjectUrl === url) {
+          URL.revokeObjectURL(url);
+          state.imageObjectUrl = null;
+        }
+        setUploadBusy(false);
+        alert('Could not open this image. Please try a different file.');
+      };
+      baseImage.src = url;
+    } catch (err) {
+      setUploadBusy(false);
+      alert(err?.message || 'Could not open this image. Please try another format.');
+    }
+  })();
 }
 
 // Theme-color mirrors --bg so the browser chrome matches the app's
@@ -421,6 +581,11 @@ function showUpload() {
   filterVaporControls.classList.add('hidden');
   filterDarkAcadControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
+  if (_filterRenderRaf) {
+    cancelAnimationFrame(_filterRenderRaf);
+    _filterRenderRaf = 0;
+  }
+  setUploadBusy(false);
 }
 
 fileInput.addEventListener('change', (e) => {
@@ -432,6 +597,7 @@ let dragEnterCount = 0;
 
 uploadScreen.addEventListener('dragenter', (e) => {
   e.preventDefault();
+  if (state.uploadBusy) return;
   dragEnterCount++;
   uploadScreen.classList.add('drag-over');
 });
@@ -443,23 +609,40 @@ uploadScreen.addEventListener('dragleave', () => {
 
 uploadScreen.addEventListener('dragover', (e) => {
   e.preventDefault(); // required to allow drop
+  if (state.uploadBusy) return;
 });
 
 uploadScreen.addEventListener('drop', (e) => {
   e.preventDefault();
+  if (state.uploadBusy) {
+    dragEnterCount = 0;
+    uploadScreen.classList.remove('drag-over');
+    return;
+  }
   dragEnterCount = 0;
   uploadScreen.classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
+  let file = e.dataTransfer?.files?.[0] || null;
+  if (!file && e.dataTransfer?.items) {
+    for (const item of e.dataTransfer.items) {
+      const candidate = item.getAsFile?.();
+      if (candidate && isLikelyImageFile(candidate)) {
+        file = candidate;
+        break;
+      }
+    }
+  }
   loadImageFile(file);
 });
 
 // Paste from clipboard
 window.addEventListener('paste', (e) => {
+  if (state.uploadBusy) return;
   const items = e.clipboardData?.items;
   if (!items) return;
   for (const item of items) {
-    if (item.type.startsWith('image/')) {
-      loadImageFile(item.getAsFile());
+    const candidate = item.getAsFile?.();
+    if (candidate && isLikelyImageFile(candidate)) {
+      loadImageFile(candidate);
       break;
     }
   }
@@ -979,6 +1162,10 @@ let chromaEl   = null;
 let vignetteEl = null;
 let vaporSrcCanvas = null;
 let vaporSrcCtx    = null;
+let grainBuffer    = null;
+let grainBufferW   = 0;
+let grainBufferH   = 0;
+let grainNoiseTs   = 0;
 
 function makeOverlayCanvas() {
   const el = document.createElement('canvas');
@@ -1011,6 +1198,19 @@ function updateGrainOverlay() {
   }
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
+  const now = performance.now();
+  const shouldRegenNoise = !grainBuffer || grainBufferW !== w || grainBufferH !== h || (now - grainNoiseTs) > 120;
+  if (shouldRegenNoise) {
+    grainBufferW = w;
+    grainBufferH = h;
+    grainNoiseTs = now;
+    grainBuffer = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < grainBuffer.length; i += 4) {
+      const v = (Math.random() * 255) | 0;
+      grainBuffer[i] = grainBuffer[i+1] = grainBuffer[i+2] = v;
+      grainBuffer[i+3] = 255;
+    }
+  }
   grainEl.width         = w;
   grainEl.height        = h;
   grainEl.style.display = '';
@@ -1018,10 +1218,7 @@ function updateGrainOverlay() {
   const gc = grainEl.getContext('2d');
   const id = gc.createImageData(w, h);
   const d  = id.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const v = (Math.random() * 255) | 0;
-    d[i] = d[i+1] = d[i+2] = v; d[i+3] = 255;
-  }
+  d.set(grainBuffer);
   gc.putImageData(id, 0, 0);
 }
 
@@ -1113,6 +1310,16 @@ function applyImageFilter() {
   updateVignetteOverlay();
 }
 
+let _filterRenderRaf = 0;
+let _resizeRaf = 0;
+function scheduleImageFilterRender() {
+  if (_filterRenderRaf) return;
+  _filterRenderRaf = requestAnimationFrame(() => {
+    _filterRenderRaf = 0;
+    applyImageFilter();
+  });
+}
+
 function updateVibeExtraControls() {
   const name = state.filter.name;
   const isNone = name === 'none';
@@ -1141,43 +1348,43 @@ filterChips.forEach(chip => {
       ctrlVignette.value = state.filter.params.vignette;
     }
     updateVibeExtraControls();
-    applyImageFilter();
+    scheduleImageFilterRender();
   });
 });
 
 ctrlFilterIntensity.addEventListener('input', () => {
   state.filter.intensity = parseInt(ctrlFilterIntensity.value);
-  applyImageFilter();
+  scheduleImageFilterRender();
 });
 
 ctrlGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlGrain.value);
-  applyImageFilter();
+  scheduleImageFilterRender();
 });
 
 ctrlScanlines.addEventListener('input', () => {
   state.filter.params.scanlines = parseInt(ctrlScanlines.value);
-  applyImageFilter();
+  scheduleImageFilterRender();
 });
 
 ctrlScanlineSize.addEventListener('input', () => {
   state.filter.params.scanlineSize = parseInt(ctrlScanlineSize.value);
-  applyImageFilter();
+  scheduleImageFilterRender();
 });
 
 ctrlChroma.addEventListener('input', () => {
   state.filter.params.chroma = parseInt(ctrlChroma.value);
-  applyImageFilter();
+  scheduleImageFilterRender();
 });
 
 ctrlDaGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlDaGrain.value);
-  applyImageFilter();
+  scheduleImageFilterRender();
 });
 
 ctrlVignette.addEventListener('input', () => {
   state.filter.params.vignette = parseInt(ctrlVignette.value);
-  applyImageFilter();
+  scheduleImageFilterRender();
 });
 
 ctrlFgColor.addEventListener('input', () => {
@@ -1276,7 +1483,7 @@ function softBlur(ctx, w, h, radius) {
   ctx.putImageData(id, 0, 0);
 }
 
-async function exportImage() {
+async function renderCurrentImageBlob() {
   const img = baseImage;
   const nw = state.imageNaturalW;
   const nh = state.imageNaturalH;
@@ -1314,6 +1521,12 @@ async function exportImage() {
   const imgOffsetX = imgRect.left - containerRect.left;
   const imgOffsetY = imgRect.top  - containerRect.top;
 
+  // Reuse one scratch canvas for all text layers.
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width  = nw;
+  tempCanvas.height = nh;
+  const tc = tempCanvas.getContext('2d');
+
   for (const tf of state.textFields) {
     const s = tf.style;
 
@@ -1342,10 +1555,7 @@ async function exportImage() {
 
     // Draw text to a temp canvas, optionally software-blur it, then composite.
     // Using a software blur avoids ctx.filter which isn't supported in Safari < 18.
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width  = nw;
-    tempCanvas.height = nh;
-    const tc = tempCanvas.getContext('2d');
+    tc.clearRect(0, 0, nw, nh);
     tc.font         = ctx.font;
     tc.textAlign    = s.align;
     tc.textBaseline = 'middle';
@@ -1373,6 +1583,12 @@ async function exportImage() {
   const blob = await new Promise(resolve =>
     exportCanvas.toBlob(resolve, 'image/jpeg', 0.93)
   );
+  if (!blob) throw new Error('Failed to render JPEG');
+  return blob;
+}
+
+async function exportImage() {
+  const blob = await renderCurrentImageBlob();
 
   // Platform detection.
   // maxTouchPoints > 0 would catch Mac trackpads on newer macOS too, so be specific.
@@ -1393,7 +1609,7 @@ async function exportImage() {
       }
     }
     // Older iOS / non-Safari fallback: show the image so the user can save it.
-    showIOSSaveOverlay(blob);
+    showRenderedPreviewOverlay(blob, { iosSaveMode: true });
     return;
   }
 
@@ -1418,43 +1634,62 @@ async function exportImage() {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-function showIOSSaveOverlay(blob) {
+function showRenderedPreviewOverlay(blob, opts = {}) {
+  const { iosSaveMode = false, title = 'Rendered Preview' } = opts;
   const url     = URL.createObjectURL(blob);
+  const existing = document.getElementById('ios-save-overlay');
+  if (existing) {
+    const oldUrl = existing.dataset.blobUrl;
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    existing.remove();
+  }
   const overlay = document.createElement('div');
   overlay.id    = 'ios-save-overlay';
+  overlay.dataset.blobUrl = url;
 
-  // "Open Image" opens the blob in iOS Quick Look / Safari viewer, where
-  // the user can tap the share icon → "Save Image" in one tap.
-  const openLink = document.createElement('a');
-  openLink.href   = url;
-  openLink.target = '_blank';
-  openLink.download = 'subtext.jpg';
-  openLink.className = 'ios-open-btn';
-  openLink.textContent = 'Open Image';
+  if (iosSaveMode) {
+    // "Open Image" opens the blob in iOS Quick Look / Safari viewer, where
+    // the user can tap the share icon → "Save Image" in one tap.
+    const openLink = document.createElement('a');
+    openLink.href   = url;
+    openLink.target = '_blank';
+    openLink.download = 'subtext.jpg';
+    openLink.className = 'ios-open-btn';
+    openLink.textContent = 'Open Image';
+    overlay.appendChild(openLink);
 
-  const msg = document.createElement('p');
-  msg.textContent = 'Then tap the share icon ↗ and choose "Save Image".';
+    const msg = document.createElement('p');
+    msg.textContent = 'Then tap the share icon ↗ and choose "Save Image".';
+    overlay.appendChild(msg);
 
-  const divider = document.createElement('p');
-  divider.className = 'ios-overlay-divider';
-  divider.textContent = '— or tap and hold the image below —';
+    const divider = document.createElement('p');
+    divider.className = 'ios-overlay-divider';
+    divider.textContent = '— or tap and hold the image below —';
+    overlay.appendChild(divider);
+  } else {
+    const heading = document.createElement('p');
+    heading.textContent = title;
+    overlay.appendChild(heading);
+  }
 
   const img = document.createElement('img');
   img.src   = url;
 
   const btn = document.createElement('button');
   btn.textContent = 'Done';
-  btn.addEventListener('click', () => {
-    overlay.remove();
-    URL.revokeObjectURL(url);
-  });
+  btn.addEventListener('click', closeRenderedPreviewOverlay);
 
-  overlay.appendChild(openLink);
-  overlay.appendChild(msg);
-  overlay.appendChild(divider);
   overlay.appendChild(img);
   overlay.appendChild(btn);
   document.body.appendChild(overlay);
+}
+
+function closeRenderedPreviewOverlay() {
+  const overlay = document.getElementById('ios-save-overlay');
+  if (!overlay) return;
+  const url = overlay.dataset.blobUrl;
+  overlay.remove();
+  if (url) URL.revokeObjectURL(url);
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -1463,19 +1698,76 @@ initGuides();
 syncFontSelectDisplay();
 switchPanelTab('typography'); // set initial data-panel attribute
 
+let _previewKeyTapCount = 0;
+let _previewKeyTimer = 0;
+const PREVIEW_KEY_DBL_TAP_MS = 800;
+
+window.addEventListener('keydown', async (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!editorScreen.classList.contains('active')) return;
+  if (!state.imageLoaded) return;
+  if (e.key.toLowerCase() !== 'p') return;
+
+  const active = document.activeElement;
+  if (active?.isContentEditable) {
+    _previewKeyTapCount = 0;
+    if (_previewKeyTimer) {
+      clearTimeout(_previewKeyTimer);
+      _previewKeyTimer = 0;
+    }
+    return;
+  }
+
+  _previewKeyTapCount += 1;
+  if (_previewKeyTapCount < 2) {
+    if (_previewKeyTimer) clearTimeout(_previewKeyTimer);
+    _previewKeyTimer = setTimeout(() => {
+      _previewKeyTapCount = 0;
+      _previewKeyTimer = 0;
+    }, PREVIEW_KEY_DBL_TAP_MS);
+    return;
+  }
+
+  _previewKeyTapCount = 0;
+  if (_previewKeyTimer) {
+    clearTimeout(_previewKeyTimer);
+    _previewKeyTimer = 0;
+  }
+
+  try {
+    e.preventDefault();
+    const blob = await renderCurrentImageBlob();
+    showRenderedPreviewOverlay(blob, { title: 'Rendered JPEG Preview' });
+  } catch {
+    alert('Could not render preview image.');
+  }
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const overlay = document.getElementById('ios-save-overlay');
+  if (overlay) {
+    closeRenderedPreviewOverlay();
+    return;
+  }
+  if (state.selectedField) {
+    e.preventDefault();
+    deselectAll();
+  }
+});
+
 // ─── Window resize: reposition all fields ────────────────────────────────────
 
 window.addEventListener('resize', () => {
-  state.textFields.forEach(tf => tf.reposition());
-});
-
-// ─── Refit image on window resize ────────────────────────────────────────────
-
-window.addEventListener('resize', () => {
-  if (state.imageLoaded) {
-    fitImageToWrapper();
-    applyImageFilter();
-  }
+  if (_resizeRaf) return;
+  _resizeRaf = requestAnimationFrame(() => {
+    _resizeRaf = 0;
+    state.textFields.forEach(tf => tf.reposition());
+    if (state.imageLoaded) {
+      fitImageToWrapper();
+      scheduleImageFilterRender();
+    }
+  });
 });
 
 // ─── Prevent accidental back/navigation ──────────────────────────────────────

@@ -38,6 +38,10 @@
         <input type="file" id="file-input" accept="image/*" />
       </label>
       <p class="upload-hint">or drag &amp; drop &middot; paste from clipboard</p>
+      <p id="upload-status" class="upload-status hidden" role="status" aria-live="polite">
+        <span class="upload-spinner" aria-hidden="true"></span>
+        <span id="upload-status-text">Loading image...</span>
+      </p>
     </div>
   </div>
 
@@ -227,7 +231,7 @@
           <div class="controls-row">
             <div class="control-group control-group--size">
               <span class="control-label">Chroma</span>
-              <input type="range" id="ctrl-chroma" min="0" max="100" step="1" value="50" />
+              <input type="range" id="ctrl-chroma" min="0" max="100" step="1" value="20" />
             </div>
           </div>
         </div>
@@ -254,6 +258,8 @@
   <!-- Export overlay (hidden canvas for rendering) -->
   <canvas id="export-canvas" style="display:none;"></canvas>
 
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/heic-to@1.3.0/dist/iife/heic-to.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
