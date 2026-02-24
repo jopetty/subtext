@@ -241,6 +241,8 @@ const exportCanvas   = document.getElementById('export-canvas');
 const isMobile = navigator.maxTouchPoints > 0;
 
 const fontControls   = document.getElementById('font-controls');
+const bottomPanel    = document.getElementById('bottom-panel');
+const panelTabBtns   = document.querySelectorAll('.panel-tab');
 
 const ctrlFont         = document.getElementById('ctrl-font');
 const ctrlSize         = document.getElementById('ctrl-size');
@@ -269,20 +271,40 @@ function loadImageFile(file) {
   baseImage.src = url;
 }
 
+// Theme-color values mirror the CSS variables so the browser chrome
+// (Safari nav bar, status bar treatment) matches the app's safe-area zones.
+const THEME = {
+  upload: { light: '#f5f0e8', dark: '#191410' },  // --bg
+  editor: { light: '#fffdf8', dark: '#211c16' },  // --surface
+};
+
+const tcLight = document.querySelector('meta[name="theme-color"][media*="light"]');
+const tcDark  = document.querySelector('meta[name="theme-color"][media*="dark"]');
+
+function setThemeColors(screen) {
+  const t = THEME[screen];
+  if (tcLight) tcLight.content = t.light;
+  if (tcDark)  tcDark.content  = t.dark;
+}
+
 function showEditor() {
   uploadScreen.classList.remove('active');
   editorScreen.classList.add('active');
+  setThemeColors('editor');
   // Clear any leftover fields
   state.textFields.forEach(tf => tf.el.remove());
   state.textFields = [];
   state.selectedField = null;
   state.lastStyle = null;
+  // Always start on the Typography tab when opening the editor
+  switchPanelTab('typography');
   updatePanel();
 }
 
 function showUpload() {
   editorScreen.classList.remove('active');
   uploadScreen.classList.add('active');
+  setThemeColors('upload');
   deselectAll();
   // Reset filter
   state.filter = { name: 'none', intensity: 75, params: {} };
@@ -776,10 +798,22 @@ function clearPreset() {
   presetBtns.forEach(b => b.classList.remove('active'));
 }
 
-// Control listeners
 function syncFontSelectDisplay() {
   ctrlFont.style.fontFamily = ctrlFont.value;
 }
+
+// ─── Mobile panel tabs ────────────────────────────────────────────────────────
+
+function switchPanelTab(tabName) {
+  bottomPanel.dataset.panel = tabName;
+  panelTabBtns.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+}
+
+panelTabBtns.forEach(tab => {
+  tab.addEventListener('click', () => switchPanelTab(tab.dataset.tab));
+});
+
+// ─── Control listeners ────────────────────────────────────────────────────────
 
 ctrlFont.addEventListener('change', () => {
   applyControlsToSelected({ font: ctrlFont.value });
@@ -1214,6 +1248,7 @@ function showIOSSaveOverlay(blob) {
 
 initGuides();
 syncFontSelectDisplay();
+switchPanelTab('typography'); // set initial data-panel attribute
 
 // ─── Window resize: reposition all fields ────────────────────────────────────
 

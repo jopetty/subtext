@@ -455,14 +455,51 @@ html, body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 #font-controls {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   justify-content: space-evenly;
+}
+
+/* ── Mobile section tabs ── */
+
+#panel-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+  /* Bleed into the side padding so the border runs edge-to-edge */
+  margin-left: -0.85rem;
+  margin-right: -0.85rem;
+  padding: 0 0.85rem;
+}
+
+.panel-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px; /* overlap the container's border-bottom */
+  padding: 0.35rem 0.5rem;
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.panel-tab.active {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* ── Shared row structure ── */
@@ -690,28 +727,41 @@ input[type="range"]::-moz-range-track {
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 14px;
-  height: 32px;
+  height: 22px;
   border-radius: 4px;
   background: var(--accent);
   cursor: pointer;
-  margin-top: -14px; /* center on 4px track: -(32-4)/2 */
+  margin-top: -9px; /* center on 4px track: -(22-4)/2 */
 }
 
 input[type="range"]::-moz-range-thumb {
   width: 14px;
-  height: 32px;
+  height: 22px;
   border-radius: 4px;
   background: var(--accent);
   cursor: pointer;
   border: none;
 }
 
+/* Full-width standalone sliders (Size, Intensity, Grain, Scanlines, Chroma)
+   can be shorter than the 36px needed to align with color pickers. */
+.control-group--size input[type="range"] {
+  height: 28px;
+}
+
 /* ── Section heading rows ── */
 
 .section-heading-row {
-  /* Negative margin counteracts the flex gap so the heading sits
-     close to its first content row, matching the Vibe section feel */
-  margin-bottom: -0.7rem;
+  /* Hidden on mobile — the panel tabs serve as section labels.
+     Desktop restores these via the media query below. */
+  display: none;
+}
+
+.section-divider {
+  /* Likewise hidden on mobile (no visual separation needed in tabs). */
+  display: none;
+  height: 1px;
+  background: var(--border);
 }
 
 .control-label.section-heading {
@@ -768,14 +818,7 @@ input[type="range"]::-moz-range-thumb {
 /* ===== FILTER SECTION ===== */
 
 #filter-section {
-  display: none; /* shown only on desktop via media query */
-}
-
-.section-divider {
-  height: 1px;
-  background: var(--border);
-  /* margin-bottom is 0 — the parent's flex gap handles spacing after the divider */
-  margin: 0.75rem 0 0;
+  display: none; /* shown only on desktop (or mobile vibe tab) */
 }
 
 .controls-row--filter-chips {
@@ -891,6 +934,73 @@ input[type="range"]::-moz-range-thumb {
 /* ===== Utility ===== */
 .hidden { display: none !important; }
 
+/* ===== MOBILE — tab-based panel switching ===== */
+
+@media (max-width: 599px) {
+  /* When the Vibe tab is active, hide Typography and show Vibe */
+  #bottom-panel[data-panel="vibe"] #font-controls {
+    display: none;
+  }
+
+  #bottom-panel[data-panel="vibe"] #filter-section {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    gap: 0.45rem;
+    padding-top: 0.4rem;
+  }
+
+  /* Compact form controls — save vertical space in the fixed-height panel */
+  select,
+  input[type="color"],
+  input[type="range"] {
+    height: 30px;
+  }
+
+  /* .control-group--size inputs are already 28px (higher specificity wins),
+     so this only affects the stroke/blur sliders in the colors row, keeping
+     them aligned with the shrunken color pickers. */
+
+  .style-btn,
+  .align-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  /* space-between distributes rows evenly without leading/trailing gaps.
+     padding-top provides a consistent, explicit gap below the tab bar. */
+  #font-controls {
+    justify-content: space-between;
+    padding-top: 0.4rem;
+  }
+
+  /* Tighter panel chrome */
+  #bottom-panel {
+    padding-top: 0.2rem;
+    padding-bottom: calc(0.2rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  #panel-tabs {
+    margin-bottom: 0;
+  }
+
+  /* Tighter label/header gaps */
+  .control-label {
+    margin-bottom: 1px;
+  }
+
+  .row-header {
+    margin-bottom: 1px;
+  }
+
+  /* Vibe-extra-controls (scanlines + chroma stacked rows) */
+  .vibe-extra-controls {
+    gap: 0.45rem;
+  }
+}
+
 /* ===== DESKTOP — sidebar layout ===== */
 
 @media (min-width: 600px) {
@@ -919,18 +1029,72 @@ input[type="range"]::-moz-range-thumb {
     overflow-y: auto;
   }
 
+  /* Hide mobile tab bar */
+  #panel-tabs {
+    display: none;
+  }
+
+  /* Restore section headings and dividers */
+  .section-heading-row {
+    display: block;
+    /* Negative margin counteracts the flex gap so the heading sits
+       close to its first content row */
+    margin-bottom: -0.7rem;
+  }
+
+  .section-divider {
+    display: block;
+    margin: 0.75rem 0 0;
+  }
+
   #font-controls,
   #filter-section {
     height: auto;
+    flex: none;         /* reset the mobile flex: 1 */
     justify-content: flex-start;
     display: flex;
     flex-direction: column;
     gap: 1.05rem;
+    overflow-y: visible; /* sidebar itself scrolls */
   }
 
   /* Image no longer constrained by panel height */
   #base-image {
     max-height: calc(100vh - var(--top-bar-h) - env(safe-area-inset-top, 0px) - 50px);
     max-width: 100%;
+  }
+}
+
+/* ===== DARK MODE ===== */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #191410;
+    --surface:   #211c16;
+    --border:    #3a3028;
+    --ink:       #f0e6d8;
+    --ink-muted: #917e6c;
+    --accent:    #c49a6c;
+    --danger:    #e05548;
+  }
+
+  /* Drag-over hint darkened to match dark bg palette */
+  #upload-screen.drag-over {
+    background: #252018;
+  }
+
+  /* Canvas surround can go a touch darker */
+  #canvas-wrapper {
+    background: #0f0d0a;
+  }
+
+  /* Hover/active overrides for buttons that use hardcoded values */
+  .upload-btn:hover,
+  .export-btn:hover {
+    background: #d4aa80;
+  }
+
+  .export-btn:active {
+    background: #a87e50;
   }
 }
