@@ -1065,31 +1065,43 @@ function updateChromaOverlay() {
     if (chromaEl) chromaEl.style.display = 'none';
     return;
   }
-  if (!chromaEl) {
-    chromaEl = makeOverlayCanvas();
-    chromaEl.style.mixBlendMode = 'screen';
-  }
-  const shift = Math.round(chromaT * 12); // up to 12px display-space shift
+  if (!chromaEl) chromaEl = makeOverlayCanvas();
+  chromaEl.style.mixBlendMode = 'normal';
+
+  const shift = Math.round(chromaT * 18);
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
   chromaEl.width         = w;
   chromaEl.height        = h;
   chromaEl.style.display = '';
-  chromaEl.style.opacity = (0.55 + 0.3 * chromaT).toFixed(3);
-  const cc = chromaEl.getContext('2d');
-  cc.clearRect(0, 0, w, h);
-  // Red fringe on the right edge
-  const rg = cc.createLinearGradient(0, 0, shift * 3, 0);
-  rg.addColorStop(0, `rgba(255,0,0,${(0.18 * chromaT).toFixed(3)})`);
-  rg.addColorStop(1, 'rgba(255,0,0,0)');
-  cc.fillStyle = rg;
-  cc.fillRect(0, 0, Math.min(shift * 3, w), h);
-  // Blue fringe on the left edge
-  const bg = cc.createLinearGradient(w, 0, w - shift * 3, 0);
-  bg.addColorStop(0, `rgba(0,100,255,${(0.18 * chromaT).toFixed(3)})`);
-  bg.addColorStop(1, 'rgba(0,100,255,0)');
-  cc.fillStyle = bg;
-  cc.fillRect(Math.max(0, w - shift * 3), 0, Math.min(shift * 3, w), h);
+  chromaEl.style.opacity = '1';
+
+  // Capture the CSS-filtered image at display size (drawImage picks up the
+  // vaporwave CSS filter, so the colour grade is baked into src).
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  tmp.getContext('2d').drawImage(baseImage, 0, 0, w, h);
+  const src = tmp.getContext('2d').getImageData(0, 0, w, h).data;
+
+  // Mirror the export's channel substitution exactly:
+  //   R ← pixel at x + shift   (red fringe right)
+  //   G ← pixel at x           (green in place — this is the missing piece)
+  //   B ← pixel at x - shift   (blue fringe left)
+  const cc  = chromaEl.getContext('2d');
+  const out = cc.createImageData(w, h);
+  const dst = out.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i  = (y * w + x) * 4;
+      const iR = (y * w + Math.min(w - 1, x + shift)) * 4;
+      const iB = (y * w + Math.max(0,     x - shift)) * 4;
+      dst[i]   = src[iR];       // R from right
+      dst[i+1] = src[i + 1];   // G in place
+      dst[i+2] = src[iB + 2];  // B from left
+      dst[i+3] = src[i + 3];   // A
+    }
+  }
+  cc.putImageData(out, 0, 0);
 }
 
 function applyImageFilter() {
