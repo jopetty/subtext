@@ -176,80 +176,62 @@ const FILTERS = {
   mexico: {
     label: 'Mexico',
     cssPreview: (t) =>
-      `sepia(${0.8*t}) saturate(${1 + 0.9*t}) hue-rotate(${-38*t}deg) brightness(${1 + 0.05*t}) contrast(${1 + 0.16*t})`,
+      `sepia(${0.8*t}) saturate(${1 + 0.2*t}) hue-rotate(${-20*t}deg) brightness(${1 - 0.1*t}) contrast(1)`,
     apply(data, w, h, t) {
+      // Polynomial LUT-like transform fitted to the approved Mexico reference.
+      // Features: [1, r, g, b, r^2, g^2, b^2, rg, rb, gb, r^3, g^3, b^3]
+      // Output is blended with source by intensity t so the slider remains smooth.
+      const C = [
+        [-0.03113131,  0.00791518,  0.00020257],
+        [ 1.6186612,   0.12332164, -0.29436573],
+        [ 0.30831575,  0.11437935,  0.40113863],
+        [-0.07751509,  0.08578058,  0.04193583],
+        [ 1.3786694,  -0.927459,    0.8342466],
+        [ 0.66139346,  0.7589711,  -0.5263351],
+        [ 0.00356758, -0.11500254, -0.19840924],
+        [-1.5515617,   1.399745,   -0.7633836],
+        [ 0.65784,    -0.35091248,  0.19579142],
+        [-0.7448524,   0.34371102, -0.3687974],
+        [-1.7140733,   0.30859822, -0.32110405],
+        [ 0.22647619, -0.7518108,   0.823262],
+        [ 0.18237661,  0.01828179,  0.87928236],
+      ];
+      const blend = Math.max(0, Math.min(1, t));
+      const invBlend = 1 - blend;
+
       for (let i = 0; i < data.length; i += 4) {
-        let r = data[i], g = data[i+1], b = data[i+2];
-        const lm = 0.299*r + 0.587*g + 0.114*b;
-        const bright = lm / 255;
+        const sr = data[i] / 255;
+        const sg = data[i + 1] / 255;
+        const sb = data[i + 2] / 255;
+        const rr = sr * sr;
+        const gg = sg * sg;
+        const bb = sb * sb;
+        const rrr = rr * sr;
+        const ggg = gg * sg;
+        const bbb = bb * sb;
+        const rg = sr * sg;
+        const rb = sr * sb;
+        const gb = sg * sb;
 
-        // Hard yellow wash overall, stronger in highlights.
-        const warm = t * (0.22 + 0.35 * bright);
-        r = clamp255(r + 118 * warm);
-        g = clamp255(g + 82 * warm);
-        b = clamp255(b - 88 * warm);
-
-        // Burnt-orange shadow push.
-        const sh = (1 - bright) * t;
-        r = clamp255(r + 30 * sh);
-        g = clamp255(g + 10 * sh);
-        b = clamp255(b - 34 * sh);
-
-        // Push saturation for that iconic hot yellow/orange look.
-        const s = 1 + 0.9 * t;
-        r = clamp255(lm + (r - lm) * s);
-        g = clamp255(lm + (g - lm) * s);
-        b = clamp255(lm + (b - lm) * s);
-
-        // Extra channel bias to keep blue channel suppressed.
-        b = clamp255(b * (1 - 0.22 * t));
-
-        // More punch with reduced exposure lift to avoid clipping highs.
-        const c = 1 + 0.16 * t;
-        const br = 1 + 0.05 * t;
-        r = clamp255(((r - 128) * c + 128) * br);
-        g = clamp255(((g - 128) * c + 128) * br);
-        b = clamp255(((b - 128) * c + 128) * br);
-
-        // Highlight rolloff: preserve texture in bright regions.
-        const hi = Math.max(0, (bright - 0.72) / 0.28) * t;
-        if (hi > 0) {
-          const cap = 238;
-          const keep = 0.52 * hi;
-          r = clamp255(r * (1 - keep) + Math.min(r, cap - 2) * keep);
-          g = clamp255(g * (1 - keep) + Math.min(g, cap - 14) * keep);
-          b = clamp255(b * (1 - keep) + Math.min(b, cap - 30) * keep);
+        const f = [1, sr, sg, sb, rr, gg, bb, rg, rb, gb, rrr, ggg, bbb];
+        let tr = 0;
+        let tg = 0;
+        let tb = 0;
+        for (let k = 0; k < 13; k++) {
+          tr += f[k] * C[k][0];
+          tg += f[k] * C[k][1];
+          tb += f[k] * C[k][2];
         }
+        tr = tr < 0 ? 0 : tr > 1 ? 1 : tr;
+        tg = tg < 0 ? 0 : tg > 1 ? 1 : tg;
+        tb = tb < 0 ? 0 : tb > 1 ? 1 : tb;
 
-        // Built-in atmospheric haze that scales with intensity.
-        const haze = 0.16 * t;
-        const hazeSat = 1 - 0.12 * t;
-        const hlm = 0.299*r + 0.587*g + 0.114*b;
-        r = clamp255((hlm + (r - hlm) * hazeSat) * (1 - haze) + 236 * haze);
-        g = clamp255((hlm + (g - hlm) * hazeSat) * (1 - haze) + 206 * haze);
-        b = clamp255((hlm + (b - hlm) * hazeSat) * (1 - haze) + 154 * haze);
-
-        // Intensity-linked tonal shaping:
-        // dim highlights and deepen shadows as intensity rises.
-        const lm2 = 0.299*r + 0.587*g + 0.114*b;
-        const hiW = Math.max(0, (lm2 - 168) / 87);   // 0 in mids, 1 in brightest range
-        const shW = Math.max(0, (122 - lm2) / 122);  // 1 in darks, 0 near mids/highs
-        const hiDim = 1 - 0.38 * t * hiW;
-        const shDim = 1 - 0.28 * t * shW;
-        const tone = hiDim * shDim;
-        r = clamp255(r * tone);
-        g = clamp255(g * tone);
-        b = clamp255(b * tone);
-
-        // Extra end-stage contrast to keep the grade punchy.
-        const c2 = 1 + 0.12 * t;
-        r = clamp255((r - 128) * c2 + 128);
-        g = clamp255((g - 128) * c2 + 128);
-        b = clamp255((b - 128) * c2 + 128);
-
-        data[i]   = r;
-        data[i+1] = g;
-        data[i+2] = b;
+        const outR = (sr * invBlend + tr * blend) * 255;
+        const outG = (sg * invBlend + tg * blend) * 255;
+        const outB = (sb * invBlend + tb * blend) * 255;
+        data[i] = clamp255(outR);
+        data[i + 1] = clamp255(outG);
+        data[i + 2] = clamp255(outB);
       }
     },
   },
