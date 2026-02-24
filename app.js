@@ -761,7 +761,7 @@ function fitImageToWrapper() {
 }
 
 function isMobileViewport() {
-  return window.matchMedia('(max-width: 599px)').matches;
+  return window.matchMedia('(max-width: 769px)').matches;
 }
 
 function updateMobileTrayHeight() {

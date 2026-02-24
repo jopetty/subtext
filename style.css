@@ -180,7 +180,7 @@
   --font-silkscreen: 'Silkscreen', monospace;
 }
 
-@media (max-width: 599px) {
+@media (max-width: 769px) {
   :root {
     --panel-h: 288px;
   }
@@ -1355,7 +1355,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* ===== MOBILE — tab-based panel switching ===== */
 
-@media (max-width: 599px) {
+@media (max-width: 769px) {
   #base-image {
     max-height: none;
   }
@@ -1472,7 +1472,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* ===== DESKTOP — sidebar layout ===== */
 
-@media (min-width: 600px) {
+@media (min-width: 770px) {
   /* Override the mobile flex-column with a 2-column grid:
      top bar spans full width; canvas + sidebar share the row below. */
   #editor-screen.active {
