@@ -37,6 +37,9 @@
       <button id="export-btn" class="export-btn" title="Save image">Save</button>
     </header>
 
+    <!-- First-load hint -->
+    <div id="canvas-hint">Double-click image to add text</div>
+
     <!-- Canvas wrapper (scrollable) -->
     <div id="canvas-wrapper">
       <div id="canvas-container">
@@ -67,6 +70,7 @@
             <button class="preset-btn active" data-preset="classic">Classic</button>
             <button class="preset-btn" data-preset="cinema">Cin&eacute;ma</button>
             <button class="preset-btn" data-preset="vaporwave">Vaporwave</button>
+            <button class="preset-btn" data-preset="darkAcademia">Dark Academia</button>
           </div>
         </div>
 
@@ -170,6 +174,7 @@
             <button class="filter-chip active" data-filter="none">None</button>
             <button class="filter-chip" data-filter="film">35mm</button>
             <button class="filter-chip" data-filter="noir">Noir</button>
+            <button class="filter-chip" data-filter="darkAcademia">Dark Academia</button>
             <button class="filter-chip" data-filter="vaporwave">Vaporwave</button>
             <button class="filter-chip" data-filter="solarpunk">Solarpunk</button>
           </div>
@@ -191,16 +196,34 @@
 
         <!-- Vaporwave-specific controls -->
         <div id="filter-vaporwave-controls" class="vibe-extra-controls hidden">
-          <div class="controls-row">
+          <div class="controls-row controls-row--split">
             <div class="control-group control-group--size">
               <span class="control-label">Scanlines</span>
               <input type="range" id="ctrl-scanlines" min="0" max="100" step="1" value="60" />
+            </div>
+            <div class="control-group control-group--size">
+              <span class="control-label">Line size</span>
+              <input type="range" id="ctrl-scanline-size" min="1" max="8" step="1" value="2" />
             </div>
           </div>
           <div class="controls-row">
             <div class="control-group control-group--size">
               <span class="control-label">Chroma</span>
               <input type="range" id="ctrl-chroma" min="0" max="100" step="1" value="50" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Dark Academia-specific controls -->
+        <div id="filter-darkacademia-controls" class="vibe-extra-controls hidden">
+          <div class="controls-row controls-row--split">
+            <div class="control-group control-group--size">
+              <span class="control-label">Grain</span>
+              <input type="range" id="ctrl-da-grain" min="0" max="100" step="1" value="45" />
+            </div>
+            <div class="control-group control-group--size">
+              <span class="control-label">Vignette</span>
+              <input type="range" id="ctrl-vignette" min="0" max="100" step="1" value="65" />
             </div>
           </div>
         </div>

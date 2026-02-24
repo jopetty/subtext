@@ -49,9 +49,20 @@ const PRESETS = {
     weight:       '700',
     italic:       true,
     align:        'center',
-    fgColor:      '#ff71ce',
-    outlineColor: '#7b2fff',
+    fgColor:      '#ffcce6',
+    outlineColor: '#9656f0',
     outlineWidth: 4,
+    blur:         0,
+  },
+  darkAcademia: {
+    font:         "'Garamond', 'EB Garamond', 'GaramondIO', serif",
+    size:         5,
+    weight:       '400',
+    italic:       false,
+    align:        'center',
+    fgColor:      '#f0e2c0',
+    outlineColor: '#1a1008',
+    outlineWidth: 3,
     blur:         0,
   },
 };
@@ -136,7 +147,7 @@ const FILTERS = {
       `saturate(${1 + 1.1*t}) hue-rotate(${-28*t}deg) contrast(${1 + 0.3*t}) brightness(${1 - 0.1*t})`,
     apply(data, w, h, t, params) {
       const orig = new Uint8ClampedArray(data);
-      const chromaShift = Math.round(8 * (params.chroma ?? 50) / 100); // independent chroma param
+      const chromaShift = Math.round(30 * (params.chroma ?? 50) / 100); // independent chroma param
 
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -172,11 +183,69 @@ const FILTERS = {
           b = clamp255((b - 128) * c + 128);
 
           // Scanlines — independent param
-          const scanlinesT = (params.scanlines ?? 60) / 100;
-          const scan = (y % 2 === 0) ? 1 : Math.max(0, 1 - 0.35 * scanlinesT);
+          const scanlinesT   = (params.scanlines    ?? 60) / 100;
+          const scanlineSize = Math.max(1, params.scanlineSize ?? 2);
+          const scan = (y % scanlineSize === 0) ? 1 : Math.max(0, 1 - 0.35 * scanlinesT);
           data[i]   = clamp255(r * scan);
           data[i+1] = clamp255(g * scan);
           data[i+2] = clamp255(b * scan);
+        }
+      }
+    },
+  },
+
+  darkAcademia: {
+    label: 'Dark Academia',
+    cssPreview: (t) =>
+      `sepia(${0.45*t}) saturate(${1 - 0.3*t}) brightness(${1 - 0.18*t}) contrast(${1 + 0.22*t})`,
+    apply(data, w, h, t, params) {
+      const grainT    = (params.grain    ?? 45) / 100;
+      const vignetteT = (params.vignette ?? 65) / 100;
+      const cx = w / 2, cy = h / 2;
+
+      for (let y = 0; y < h; y++) {
+        // Vignette weight for this row
+        const dy = (y - cy) / cy;
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          let r = data[i], g = data[i+1], b = data[i+2];
+
+          // Desaturate
+          const lm = 0.299*r + 0.587*g + 0.114*b;
+          const s = 1 - 0.3 * t;
+          r = clamp255(lm + (r - lm) * s);
+          g = clamp255(lm + (g - lm) * s);
+          b = clamp255(lm + (b - lm) * s);
+
+          // Warm sepia toning: lift reds, pull blues
+          r = clamp255(r + 20 * t);
+          g = clamp255(g + 6  * t);
+          b = clamp255(b - 28 * t);
+
+          // Contrast + darken (crush shadows for chiaroscuro)
+          const c = 1 + 0.22 * t;
+          const br = 1 - 0.18 * t;
+          r = clamp255(((r - 128) * c + 128) * br);
+          g = clamp255(((g - 128) * c + 128) * br);
+          b = clamp255(((b - 128) * c + 128) * br);
+
+          // Vignette (radial darkening toward edges)
+          const dx = (x - cx) / cx;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          const vFactor = 1 - vignetteT * t * Math.pow(Math.min(dist, 1.4), 1.6) * 0.75;
+          r = clamp255(r * vFactor);
+          g = clamp255(g * vFactor);
+          b = clamp255(b * vFactor);
+
+          // Grain
+          if (grainT > 0) {
+            const noise = (Math.random() - 0.5) * 38 * grainT * t;
+            r = clamp255(r + noise);
+            g = clamp255(g + noise);
+            b = clamp255(b + noise);
+          }
+
+          data[i] = r; data[i+1] = g; data[i+2] = b;
         }
       }
     },
@@ -218,8 +287,9 @@ const FILTERS = {
 
 // Default values for vibe-specific extra params
 const FILTER_PARAM_DEFAULTS = {
-  film:      { grain: 50 },
-  vaporwave: { scanlines: 60, chroma: 50 },
+  film:        { grain: 50 },
+  vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 50 },
+  darkAcademia: { grain: 45, vignette: 65 },
 };
 
 function defaultStyle() {
@@ -235,6 +305,7 @@ const backBtn        = document.getElementById('back-btn');
 const exportBtn      = document.getElementById('export-btn');
 const baseImage      = document.getElementById('base-image');
 const canvasContainer = document.getElementById('canvas-container');
+const canvasHint      = document.getElementById('canvas-hint');
 const exportCanvas   = document.getElementById('export-canvas');
 
 // True on phones/tablets — used to gate the single-tap-to-select behaviour.
@@ -271,11 +342,11 @@ function loadImageFile(file) {
   baseImage.src = url;
 }
 
-// Theme-color values mirror the CSS variables so the browser chrome
-// (Safari nav bar, status bar treatment) matches the app's safe-area zones.
+// Theme-color mirrors --bg so the browser chrome matches the app's
+// safe-area zones, which are now all painted with the same --bg color.
 const THEME = {
   upload: { light: '#f5f0e8', dark: '#191410' },  // --bg
-  editor: { light: '#fffdf8', dark: '#211c16' },  // --surface
+  editor: { light: '#f5f0e8', dark: '#191410' },  // --bg (same; panels now use --bg)
 };
 
 const tcLight = document.querySelector('meta[name="theme-color"][media*="light"]');
@@ -285,6 +356,16 @@ function setThemeColors(screen) {
   const t = THEME[screen];
   if (tcLight) tcLight.content = t.light;
   if (tcDark)  tcDark.content  = t.dark;
+}
+
+let _hintTimer = null;
+
+function dismissHint() {
+  if (!canvasHint || canvasHint.classList.contains('hidden')) return;
+  canvasHint.classList.add('hidden');
+  clearTimeout(_hintTimer);
+  // Remove from layout after fade completes so it can't interfere
+  canvasHint.addEventListener('transitionend', () => canvasHint.remove(), { once: true });
 }
 
 function showEditor() {
@@ -299,6 +380,12 @@ function showEditor() {
   // Always start on the Typography tab when opening the editor
   switchPanelTab('typography');
   updatePanel();
+  // Show the canvas hint and auto-dismiss after 10 s
+  if (canvasHint) {
+    canvasHint.classList.remove('hidden');
+    clearTimeout(_hintTimer);
+    _hintTimer = setTimeout(dismissHint, 10000);
+  }
 }
 
 function showUpload() {
@@ -311,10 +398,13 @@ function showUpload() {
   baseImage.style.filter = '';
   if (grainEl) grainEl.style.display = 'none';
   if (scanlineEl) scanlineEl.style.display = 'none';
+  if (chromaEl) chromaEl.style.display = 'none';
+  if (vignetteEl) vignetteEl.style.display = 'none';
   filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
   filterIntensityRow.classList.add('hidden');
   filterFilmControls.classList.add('hidden');
   filterVaporControls.classList.add('hidden');
+  filterDarkAcadControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
 }
 
@@ -628,6 +718,7 @@ canvasContainer.addEventListener('pointerdown', (e) => {
 
   if (dt < DBL_TAP_DELAY && dist < 30) {
     // Double tap — do NOT preventDefault; it would suppress focus()
+    dismissHint();
     const xPct = cx / canvasContainer.offsetWidth;
     const yPct = cy / canvasContainer.offsetHeight;
     addTextField(xPct, yPct);
@@ -854,9 +945,13 @@ const filterIntensityRow   = document.getElementById('filter-intensity-row');
 const ctrlFilterIntensity  = document.getElementById('ctrl-filter-intensity');
 const filterFilmControls   = document.getElementById('filter-film-controls');
 const filterVaporControls  = document.getElementById('filter-vaporwave-controls');
+const filterDarkAcadControls = document.getElementById('filter-darkacademia-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
+const ctrlScanlineSize     = document.getElementById('ctrl-scanline-size');
 const ctrlChroma           = document.getElementById('ctrl-chroma');
+const ctrlDaGrain          = document.getElementById('ctrl-da-grain');
+const ctrlVignette         = document.getElementById('ctrl-vignette');
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
 // Film: random grain canvas  (mix-blend-mode: overlay)
@@ -865,6 +960,8 @@ const ctrlChroma           = document.getElementById('ctrl-chroma');
 
 let grainEl    = null;
 let scanlineEl = null;
+let chromaEl   = null;
+let vignetteEl = null;
 
 function makeOverlayCanvas() {
   const el = document.createElement('canvas');
@@ -874,7 +971,9 @@ function makeOverlayCanvas() {
 }
 
 function updateGrainOverlay() {
-  if (state.filter.name !== 'film') {
+  const isDark = state.filter.name === 'darkAcademia';
+  const isFilm = state.filter.name === 'film';
+  if (!isFilm && !isDark) {
     if (grainEl) grainEl.style.display = 'none';
     return;
   }
@@ -882,13 +981,14 @@ function updateGrainOverlay() {
     grainEl = makeOverlayCanvas();
     grainEl.style.mixBlendMode = 'overlay';
   }
-  const grainT = (state.filter.params.grain ?? 50) / 100;
+  const grainT   = (state.filter.params.grain ?? (isDark ? 45 : 50)) / 100;
+  const maxAlpha = isDark ? 0.28 : 0.35;
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
   grainEl.width         = w;
   grainEl.height        = h;
   grainEl.style.display = '';
-  grainEl.style.opacity = (0.35 * grainT).toFixed(3);
+  grainEl.style.opacity = (maxAlpha * grainT).toFixed(3);
   const gc = grainEl.getContext('2d');
   const id = gc.createImageData(w, h);
   const d  = id.data;
@@ -899,13 +999,36 @@ function updateGrainOverlay() {
   gc.putImageData(id, 0, 0);
 }
 
+function updateVignetteOverlay() {
+  if (state.filter.name !== 'darkAcademia') {
+    if (vignetteEl) vignetteEl.style.display = 'none';
+    return;
+  }
+  const vigT = (state.filter.params.vignette ?? 65) / 100;
+  const t    = state.filter.intensity / 100;
+  if (!vignetteEl) vignetteEl = makeOverlayCanvas();
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  vignetteEl.width         = w;
+  vignetteEl.height        = h;
+  vignetteEl.style.display = '';
+  const vc = vignetteEl.getContext('2d');
+  vc.clearRect(0, 0, w, h);
+  const grad = vc.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w, h) * 0.65);
+  grad.addColorStop(0.25, 'rgba(0,0,0,0)');
+  grad.addColorStop(1,    `rgba(0,0,0,${(vigT * t * 0.82).toFixed(3)})`);
+  vc.fillStyle = grad;
+  vc.fillRect(0, 0, w, h);
+}
+
 function updateScanlineOverlay() {
   if (state.filter.name !== 'vaporwave') {
     if (scanlineEl) scanlineEl.style.display = 'none';
     return;
   }
   if (!scanlineEl) scanlineEl = makeOverlayCanvas();
-  const scanlinesT = (state.filter.params.scanlines ?? 60) / 100;
+  const scanlinesT    = (state.filter.params.scanlines    ?? 60) / 100;
+  const scanlineSize  = Math.max(1, state.filter.params.scanlineSize ?? 2);
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
   scanlineEl.width         = w;
@@ -914,7 +1037,44 @@ function updateScanlineOverlay() {
   const sc = scanlineEl.getContext('2d');
   sc.clearRect(0, 0, w, h);
   sc.fillStyle = `rgba(0,0,0,${(0.35 * scanlinesT).toFixed(3)})`;
-  for (let y = 0; y < h; y += 2) sc.fillRect(0, y, w, 1);
+  for (let y = 0; y < h; y += scanlineSize) sc.fillRect(0, y, w, Math.max(1, scanlineSize - 1));
+}
+
+function updateChromaOverlay() {
+  if (state.filter.name !== 'vaporwave') {
+    if (chromaEl) chromaEl.style.display = 'none';
+    return;
+  }
+  const chromaT = (state.filter.params.chroma ?? 50) / 100;
+  if (chromaT === 0) {
+    if (chromaEl) chromaEl.style.display = 'none';
+    return;
+  }
+  if (!chromaEl) {
+    chromaEl = makeOverlayCanvas();
+    chromaEl.style.mixBlendMode = 'screen';
+  }
+  const shift = Math.round(chromaT * 12); // up to 12px display-space shift
+  const w = baseImage.offsetWidth  || 1;
+  const h = baseImage.offsetHeight || 1;
+  chromaEl.width         = w;
+  chromaEl.height        = h;
+  chromaEl.style.display = '';
+  chromaEl.style.opacity = (0.55 + 0.3 * chromaT).toFixed(3);
+  const cc = chromaEl.getContext('2d');
+  cc.clearRect(0, 0, w, h);
+  // Red fringe on the right edge
+  const rg = cc.createLinearGradient(0, 0, shift * 3, 0);
+  rg.addColorStop(0, `rgba(255,0,0,${(0.18 * chromaT).toFixed(3)})`);
+  rg.addColorStop(1, 'rgba(255,0,0,0)');
+  cc.fillStyle = rg;
+  cc.fillRect(0, 0, Math.min(shift * 3, w), h);
+  // Blue fringe on the left edge
+  const bg = cc.createLinearGradient(w, 0, w - shift * 3, 0);
+  bg.addColorStop(0, `rgba(0,100,255,${(0.18 * chromaT).toFixed(3)})`);
+  bg.addColorStop(1, 'rgba(0,100,255,0)');
+  cc.fillStyle = bg;
+  cc.fillRect(Math.max(0, w - shift * 3), 0, Math.min(shift * 3, w), h);
 }
 
 function applyImageFilter() {
@@ -926,6 +1086,8 @@ function applyImageFilter() {
   }
   updateGrainOverlay();
   updateScanlineOverlay();
+  updateChromaOverlay();
+  updateVignetteOverlay();
 }
 
 function updateVibeExtraControls() {
@@ -934,6 +1096,7 @@ function updateVibeExtraControls() {
   filterIntensityRow.classList.toggle('hidden', isNone);
   filterFilmControls.classList.toggle('hidden', name !== 'film');
   filterVaporControls.classList.toggle('hidden', name !== 'vaporwave');
+  filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
 }
 
 filterChips.forEach(chip => {
@@ -947,8 +1110,12 @@ filterChips.forEach(chip => {
     if (state.filter.name === 'film') {
       ctrlGrain.value = state.filter.params.grain;
     } else if (state.filter.name === 'vaporwave') {
-      ctrlScanlines.value = state.filter.params.scanlines;
-      ctrlChroma.value    = state.filter.params.chroma;
+      ctrlScanlines.value    = state.filter.params.scanlines;
+      ctrlScanlineSize.value = state.filter.params.scanlineSize;
+      ctrlChroma.value       = state.filter.params.chroma;
+    } else if (state.filter.name === 'darkAcademia') {
+      ctrlDaGrain.value  = state.filter.params.grain;
+      ctrlVignette.value = state.filter.params.vignette;
     }
     updateVibeExtraControls();
     applyImageFilter();
@@ -970,8 +1137,23 @@ ctrlScanlines.addEventListener('input', () => {
   applyImageFilter();
 });
 
+ctrlScanlineSize.addEventListener('input', () => {
+  state.filter.params.scanlineSize = parseInt(ctrlScanlineSize.value);
+  applyImageFilter();
+});
+
 ctrlChroma.addEventListener('input', () => {
   state.filter.params.chroma = parseInt(ctrlChroma.value);
+  applyImageFilter();
+});
+
+ctrlDaGrain.addEventListener('input', () => {
+  state.filter.params.grain = parseInt(ctrlDaGrain.value);
+  applyImageFilter();
+});
+
+ctrlVignette.addEventListener('input', () => {
+  state.filter.params.vignette = parseInt(ctrlVignette.value);
   applyImageFilter();
 });
 
