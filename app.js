@@ -145,9 +145,9 @@ const FILTERS = {
     // appear only in the exported image (pixel-level apply below).
     cssPreview: (t) =>
       `saturate(${1 + 1.1*t}) hue-rotate(${-28*t}deg) contrast(${1 + 0.3*t}) brightness(${1 - 0.1*t})`,
-    apply(data, w, h, t, params) {
+    apply(data, w, h, t, params, pixelScale = 1) {
       const orig = new Uint8ClampedArray(data);
-      const chromaShift = Math.round(30 * (params.chroma ?? 50) / 100); // independent chroma param
+      const chromaShift = Math.round(30 * (params.chroma ?? 50) / 100 * pixelScale);
 
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -184,7 +184,7 @@ const FILTERS = {
 
           // Scanlines — independent param
           const scanlinesT   = (params.scanlines    ?? 60) / 100;
-          const scanlineSize = Math.max(1, params.scanlineSize ?? 2);
+          const scanlineSize = Math.max(1, Math.round((params.scanlineSize ?? 2) * pixelScale));
           const scan = (y % scanlineSize === 0) ? 1 : Math.max(0, 1 - 0.35 * scanlinesT);
           data[i]   = clamp255(r * scan);
           data[i+1] = clamp255(g * scan);
@@ -1296,7 +1296,15 @@ async function exportImage() {
   // Apply image filter (pixel-level, fully cross-browser)
   if (state.filter.name !== 'none') {
     const imgData = ctx.getImageData(0, 0, nw, nh);
-    FILTERS[state.filter.name].apply(imgData.data, nw, nh, state.filter.intensity / 100, state.filter.params);
+    const pixelScale = state.filter.name === 'vaporwave' ? scale : 1;
+    FILTERS[state.filter.name].apply(
+      imgData.data,
+      nw,
+      nh,
+      state.filter.intensity / 100,
+      state.filter.params,
+      pixelScale
+    );
     ctx.putImageData(imgData, 0, 0);
   }
 
@@ -1346,7 +1354,7 @@ async function exportImage() {
       const ly = startY + i * lineHeight;
 
       if (s.outlineWidth > 0) {
-        tc.lineWidth   = s.outlineWidth * scale * 2;
+        tc.lineWidth   = s.outlineWidth * scale;
         tc.strokeStyle = s.outlineColor;
         tc.lineJoin    = 'round';
         tc.strokeText(line, lx, ly);
