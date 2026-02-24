@@ -19,6 +19,7 @@ const state = {
   lastPreset: 'classic', // preset name of last-edited field (or null if manually edited)
   dragState: null,       // { field, startX, startY, origLeft, origTop }
   filter: { name: 'none', intensity: 75, params: {}, applyOnTop: false },
+  copyActionAvailable: true,
 };
 
 // Preset styles
@@ -2594,6 +2595,37 @@ async function getClipboardWritePermissionState() {
   }
 }
 
+function isIOSLikePlatform() {
+  return /iP(ad|hone|od)/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+async function refreshCopyActionAvailability() {
+  let enabled =
+    window.isSecureContext &&
+    !!navigator.clipboard &&
+    typeof window.ClipboardItem !== 'undefined';
+
+  // iOS frequently exposes Clipboard APIs but blocks image writes in practice.
+  if (enabled && isIOSLikePlatform()) {
+    enabled = false;
+  }
+
+  if (enabled && typeof window.ClipboardItem.supports === 'function') {
+    enabled =
+      window.ClipboardItem.supports('image/png') ||
+      window.ClipboardItem.supports('image/jpeg');
+  }
+
+  if (enabled) {
+    const permissionState = await getClipboardWritePermissionState();
+    if (permissionState === 'denied') enabled = false;
+  }
+
+  state.copyActionAvailable = enabled;
+  if (copyBtn) copyBtn.classList.toggle('hidden', !enabled);
+}
+
 async function handleSaveAction() {
   try {
     const status = await exportImage();
@@ -2616,6 +2648,10 @@ async function handleSaveAction() {
 }
 
 async function handleCopyAction() {
+  if (!state.copyActionAvailable) {
+    showHintMessage('Copy unavailable on this browser/device.');
+    return;
+  }
   if (!window.isSecureContext) {
     showHintMessage('Copy requires HTTPS (or localhost).');
     return;
@@ -2630,8 +2666,7 @@ async function handleCopyAction() {
     showHintMessage('Copied image');
   } catch (err) {
     const isNotAllowed = err?.name === 'NotAllowedError';
-    const isIOS = /iP(ad|hone|od)/i.test(navigator.userAgent) ||
-      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isIOS = isIOSLikePlatform();
     if (isNotAllowed && isIOS) {
       try {
         const blob = await renderCurrentImageBlob({ mime: 'image/jpeg', quality: 0.93 });
@@ -2726,6 +2761,7 @@ syncFontSelectDisplay();
 switchPanelTab('typography'); // set initial data-panel attribute
 exportBtn.addEventListener('click', handleSaveAction);
 copyBtn.addEventListener('click', handleCopyAction);
+void refreshCopyActionAvailability();
 
 let _previewKeyTapCount = 0;
 let _previewKeyTimer = 0;
@@ -2783,6 +2819,7 @@ window.addEventListener('keydown', async (e) => {
   if (!state.imageLoaded) return;
   const k = e.key.toLowerCase();
   if (k !== 's' && k !== 'c') return;
+  if (k === 'c' && !state.copyActionAvailable) return;
 
   const active = document.activeElement;
   if (active?.isContentEditable) {
