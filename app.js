@@ -475,6 +475,8 @@ const FILTERS = {
 const FILTER_PARAM_DEFAULTS = {
   film:        { grain: 10 },
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
+  twilight:    {},
+  mexico:      {},
   darkAcademia: { grain: 45, vignette: 65 },
   solarpunk:   { bloom: 35, haze: 25 },
   hegseth:     { angle: 0, ghostDistance: 50 },
@@ -2192,6 +2194,14 @@ function updateVibeExtraControls() {
 
 filterChips.forEach(chip => {
   chip.addEventListener('click', () => {
+    // Avoid deferred stale render when switching filters quickly.
+    if (_filterRenderRaf) {
+      cancelAnimationFrame(_filterRenderRaf);
+      _filterRenderRaf = 0;
+    }
+    hideLegacyFilterOverlays();
+    if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+
     filterChips.forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
     state.filter.name = chip.dataset.filter;
@@ -2215,7 +2225,7 @@ filterChips.forEach(chip => {
       ctrlHegsethGhostDistance.value = state.filter.params.ghostDistance;
     }
     updateVibeExtraControls();
-    scheduleImageFilterRender();
+    applyImageFilter();
   });
 });
 
