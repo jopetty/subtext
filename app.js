@@ -970,13 +970,15 @@ const ctrlVignette         = document.getElementById('ctrl-vignette');
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
 // Film: random grain canvas  (mix-blend-mode: overlay)
-// Vaporwave: scanline canvas (semi-transparent dark rows)
+// Vaporwave: full pixel render canvas (exact export pipeline at preview res)
 // These effects can't be replicated with CSS filters alone.
 
 let grainEl    = null;
 let scanlineEl = null;
 let chromaEl   = null;
 let vignetteEl = null;
+let vaporSrcCanvas = null;
+let vaporSrcCtx    = null;
 
 function makeOverlayCanvas() {
   const el = document.createElement('canvas');
@@ -997,13 +999,22 @@ function updateGrainOverlay() {
     grainEl.style.mixBlendMode = 'overlay';
   }
   const grainT   = (state.filter.params.grain ?? (isDark ? 45 : 50)) / 100;
+  const t        = state.filter.intensity / 100;
+  // Film grain is intentionally independent of intensity in export. Dark
+  // Academia grain is intensity-scaled in export, so mirror that here.
+  const intensityFactor = isDark ? t : 1;
   const maxAlpha = isDark ? 0.28 : 0.35;
+  const opacity  = maxAlpha * grainT * intensityFactor;
+  if (opacity <= 0.001) {
+    if (grainEl) grainEl.style.display = 'none';
+    return;
+  }
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
   grainEl.width         = w;
   grainEl.height        = h;
   grainEl.style.display = '';
-  grainEl.style.opacity = (maxAlpha * grainT).toFixed(3);
+  grainEl.style.opacity = opacity.toFixed(3);
   const gc = grainEl.getContext('2d');
   const id = gc.createImageData(w, h);
   const d  = id.data;
@@ -1037,22 +1048,9 @@ function updateVignetteOverlay() {
 }
 
 function updateScanlineOverlay() {
-  if (state.filter.name !== 'vaporwave') {
-    if (scanlineEl) scanlineEl.style.display = 'none';
-    return;
-  }
-  if (!scanlineEl) scanlineEl = makeOverlayCanvas();
-  const scanlinesT    = (state.filter.params.scanlines    ?? 60) / 100;
-  const scanlineSize  = Math.max(1, state.filter.params.scanlineSize ?? 2);
-  const w = baseImage.offsetWidth  || 1;
-  const h = baseImage.offsetHeight || 1;
-  scanlineEl.width         = w;
-  scanlineEl.height        = h;
-  scanlineEl.style.display = '';
-  const sc = scanlineEl.getContext('2d');
-  sc.clearRect(0, 0, w, h);
-  sc.fillStyle = `rgba(0,0,0,${(0.35 * scanlinesT).toFixed(3)})`;
-  for (let y = 0; y < h; y += scanlineSize) sc.fillRect(0, y, w, Math.max(1, scanlineSize - 1));
+  // Vaporwave scanlines are now rendered in updateChromaOverlay() using the
+  // same pixel pipeline as export, so this legacy overlay stays hidden.
+  if (scanlineEl) scanlineEl.style.display = 'none';
 }
 
 function updateChromaOverlay() {
@@ -1060,52 +1058,50 @@ function updateChromaOverlay() {
     if (chromaEl) chromaEl.style.display = 'none';
     return;
   }
-  const chromaT = (state.filter.params.chroma ?? 50) / 100;
-  if (chromaT === 0) {
-    if (chromaEl) chromaEl.style.display = 'none';
-    return;
-  }
   if (!chromaEl) chromaEl = makeOverlayCanvas();
   chromaEl.style.mixBlendMode = 'normal';
 
-  const shift = Math.round(chromaT * 18);
   const w = baseImage.offsetWidth  || 1;
   const h = baseImage.offsetHeight || 1;
+  const t = state.filter.intensity / 100;
+  const chromaT = (state.filter.params.chroma ?? 50) / 100;
+  const scanlinesT = (state.filter.params.scanlines ?? 60) / 100;
+  // Exact identity case for FILTERS.vaporwave.apply().
+  if (t === 0 && chromaT === 0 && scanlinesT === 0) {
+    chromaEl.style.display = 'none';
+    return;
+  }
   chromaEl.width         = w;
   chromaEl.height        = h;
   chromaEl.style.display = '';
   chromaEl.style.opacity = '1';
 
-  // Capture the CSS-filtered image at display size (drawImage picks up the
-  // vaporwave CSS filter, so the colour grade is baked into src).
-  const tmp = document.createElement('canvas');
-  tmp.width = w; tmp.height = h;
-  tmp.getContext('2d').drawImage(baseImage, 0, 0, w, h);
-  const src = tmp.getContext('2d').getImageData(0, 0, w, h).data;
-
-  // Mirror the export's channel substitution exactly:
-  //   R ← pixel at x + shift   (red fringe right)
-  //   G ← pixel at x           (green in place — this is the missing piece)
-  //   B ← pixel at x - shift   (blue fringe left)
-  const cc  = chromaEl.getContext('2d');
-  const out = cc.createImageData(w, h);
-  const dst = out.data;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i  = (y * w + x) * 4;
-      const iR = (y * w + Math.min(w - 1, x + shift)) * 4;
-      const iB = (y * w + Math.max(0,     x - shift)) * 4;
-      dst[i]   = src[iR];       // R from right
-      dst[i+1] = src[i + 1];   // G in place
-      dst[i+2] = src[iB + 2];  // B from left
-      dst[i+3] = src[i + 3];   // A
-    }
+  // Render the exact export filter logic at preview resolution so the editor
+  // image matches the saved JPEG (including chroma and scanlines).
+  if (!vaporSrcCanvas) {
+    vaporSrcCanvas = document.createElement('canvas');
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
   }
-  cc.putImageData(out, 0, 0);
+  if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
+    vaporSrcCanvas.width = w;
+    vaporSrcCanvas.height = h;
+  }
+  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
+  FILTERS.vaporwave.apply(
+    previewData.data,
+    w,
+    h,
+    t,
+    state.filter.params
+  );
+
+  const cc  = chromaEl.getContext('2d');
+  cc.putImageData(previewData, 0, 0);
 }
 
 function applyImageFilter() {
-  if (state.filter.name === 'none') {
+  if (state.filter.name === 'none' || state.filter.name === 'vaporwave') {
     baseImage.style.filter = '';
   } else {
     const t = state.filter.intensity / 100;
@@ -1468,7 +1464,10 @@ window.addEventListener('resize', () => {
 // ─── Refit image on window resize ────────────────────────────────────────────
 
 window.addEventListener('resize', () => {
-  if (state.imageLoaded) fitImageToWrapper();
+  if (state.imageLoaded) {
+    fitImageToWrapper();
+    applyImageFilter();
+  }
 });
 
 // ─── Prevent accidental back/navigation ──────────────────────────────────────
