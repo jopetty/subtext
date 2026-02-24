@@ -57,7 +57,7 @@ const PRESETS = {
     blur:         0.15,
   },
   darkAcademia: {
-    font:         "'Garamond', 'EB Garamond', 'GaramondIO', serif",
+    font:         "'Garamontio', 'EB Garamond', Garamond, serif",
     size:         5,
     weight:       '400',
     italic:       false,
@@ -814,7 +814,10 @@ class TextField {
     const inner = document.createElement('div');
     inner.className = 'text-field-inner';
     inner.contentEditable = 'true';
-    inner.spellcheck = false;
+    // Keep iOS/macOS text substitutions enabled (smart quotes, autocorrect).
+    inner.spellcheck = true;
+    inner.setAttribute('autocorrect', 'on');
+    inner.setAttribute('autocapitalize', 'sentences');
     inner.setAttribute('data-placeholder', 'Caption…');
     inner.textContent = this.text;
 

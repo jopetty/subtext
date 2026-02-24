@@ -5,7 +5,7 @@
 
 /* ── Garamond fallback (garamontio) ── */
 @font-face {
-  font-family: 'GaramondIO';
+  font-family: 'Garamontio';
   src: url('fonts/garamontio.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
@@ -13,9 +13,42 @@
 }
 
 @font-face {
-  font-family: 'GaramondIO';
+  font-family: 'Garamontio';
   src: url('fonts/garamontio_it.woff2') format('woff2');
   font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ── Garamontio Sans ── */
+@font-face {
+  font-family: 'GaramontioSans';
+  src: url('fonts/garamontio-sans.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GaramontioSans';
+  src: url('fonts/garamontio-sans-italic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GaramontioSans';
+  src: url('fonts/garamontio-sans-bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GaramontioSans';
+  src: url('fonts/garamontio-sans-bold-italic.woff2') format('woff2');
+  font-weight: 700;
   font-style: italic;
   font-display: swap;
 }
@@ -94,7 +127,7 @@
   --top-bar-h: 52px;
   --radius:    6px;
   --font-ui:   'Saira', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
-  --font-serif: Georgia, 'Times New Roman', serif;
+  --font-serif: 'Garamontio', 'EB Garamond', Garamond, 'Times New Roman', serif;
 }
 
 html, body {
@@ -154,8 +187,8 @@ html, body {
 
 .wordmark {
   font-size: 2.8rem;
-  font-weight: 400;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.025em;
   margin: 0 0 2.5rem;
   color: var(--accent);
   font-style: italic;
@@ -229,6 +262,8 @@ html, body {
   padding: 0 2rem;
   text-align: center;
   font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: 0.01em;
   font-style: italic;
   font-size: 0.88rem;
   line-height: 1.8;
@@ -244,6 +279,11 @@ html, body {
 #upload-quote a {
   color: inherit;
   text-decoration: none;
+}
+
+#upload-quote em {
+  font-style: normal;
+  font-weight: 700;
 }
 
 /* ===== EDITOR SCREEN ===== */
@@ -287,9 +327,10 @@ html, body {
 
 .wordmark-small {
   font-size: 1.25rem;
+  font-weight: 700;
   font-style: italic;
   color: var(--accent);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
   font-family: var(--font-serif);
   text-align: center;
 }
@@ -526,6 +567,15 @@ html, body {
   content: attr(data-placeholder);
   color: rgba(255, 255, 255, 0.55);
   pointer-events: none;
+}
+
+/* Keep native autocorrect/substitutions but hide spell/grammar underlines
+   so editor preview matches rendered output. */
+.text-field-inner::spelling-error,
+.text-field-inner::grammar-error,
+.text-field-inner::-webkit-spelling-error,
+.text-field-inner::-webkit-grammar-error {
+  text-decoration: none;
 }
 
 /* text-stroke via CSS paint-order trick, applied via JS inline styles */
