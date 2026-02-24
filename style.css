@@ -467,7 +467,10 @@ html, body {
   letter-spacing: 0.04em;
   padding: 0.35em 0.85em;
   border-radius: 999px;
-  white-space: nowrap;
+  max-width: calc(100vw - 24px);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
   pointer-events: none;
   z-index: 200;
   opacity: 1;
