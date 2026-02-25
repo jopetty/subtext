@@ -26,6 +26,7 @@ describe('app.js pure helpers', () => {
     const { helpers } = loadAppHelpers();
     expect(helpers.isLikelyImageFile({ name: 'x.dat', type: 'image/png' })).toBe(true);
     expect(helpers.isLikelyImageFile({ name: 'x.webp', type: '' })).toBe(true);
+    expect(helpers.isLikelyImageFile({ name: 'vector.svg', type: '' })).toBe(true);
     expect(helpers.isLikelyImageFile({ name: 'x.txt', type: 'text/plain' })).toBe(false);
   });
 
