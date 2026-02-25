@@ -887,6 +887,8 @@ function defaultStyle() {
 const uploadScreen   = document.getElementById('upload-screen');
 const editorScreen   = document.getElementById('editor-screen');
 const fileInput      = document.getElementById('file-input');
+const addObjectInput = document.getElementById('add-object-input');
+const addObjectBtns  = document.querySelectorAll('.add-object-btn');
 const backBtn        = document.getElementById('back-btn');
 const exportBtn      = document.getElementById('export-btn');
 const copyBtn        = document.getElementById('copy-btn');
@@ -975,6 +977,9 @@ function extractFirstImageFile(transfer) {
 function setUploadBusy(isBusy, message = 'Loading image...') {
   state.uploadBusy = isBusy;
   fileInput.disabled = isBusy;
+  addObjectBtns.forEach((btn) => {
+    btn.disabled = isBusy;
+  });
   if (!uploadStatus || !uploadStatusText) return;
   uploadStatus.classList.toggle('hidden', !isBusy);
   uploadStatusText.textContent = message;
@@ -1306,6 +1311,24 @@ fileInput.addEventListener('change', (e) => {
   loadImageFile(e.target.files[0]);
 });
 
+if (addObjectBtns.length && addObjectInput) {
+  addObjectBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (state.uploadBusy || !state.imageLoaded) return;
+      addObjectInput.click();
+    });
+  });
+
+  addObjectInput.addEventListener('change', (e) => {
+    const file = e.target.files?.[0] || null;
+    if (file) {
+      addImageObjectFromFile(file, { xPct: 0.5, yPct: 0.5 });
+    }
+    // Allow choosing the same file again.
+    addObjectInput.value = '';
+  });
+}
+
 // Drag-and-drop onto the upload screen
 let dragEnterCount = 0;
 
@@ -1534,7 +1557,7 @@ class TextObject {
       e.stopPropagation();
       if (document.activeElement === this.innerEl) return;
 
-      const focusOnClick = (e.target === this.innerEl && state.selectedObject === this && !isMobile);
+      const focusOnClick = (e.target === this.innerEl && state.selectedObject === this);
       e.preventDefault();
       selectField(this);
       startDrag(e, this, { focusOnClick });
@@ -1787,7 +1810,14 @@ function addTextObject(xPct, yPct) {
   loadFieldStyle(tf);
   // Ensure layer-mode filter preview is applied to newly created text fields.
   scheduleImageFilterRender({ settle: true });
-  setTimeout(() => tf.innerEl.focus(), 30);
+  const focusNewField = () => {
+    tf.innerEl.focus({ preventScroll: true });
+  };
+  // Immediate focus keeps mobile behavior aligned with desktop; fallback handles
+  // engines that require one more layout tick before contenteditable can focus.
+  focusNewField();
+  requestAnimationFrame(focusNewField);
+  setTimeout(focusNewField, 30);
   return tf;
 }
 
@@ -1918,7 +1948,8 @@ canvasContainer.addEventListener('pointerdown', (e) => {
     dismissHint();
     const xPct = cx / canvasContainer.offsetWidth;
     const yPct = cy / canvasContainer.offsetHeight;
-    addTextField(xPct, yPct);
+    const tf = addTextField(xPct, yPct);
+    tf?.innerEl?.focus({ preventScroll: true });
     _lastTap = 0;
     _justCreatedField = true;
     setTimeout(() => { _justCreatedField = false; }, 400);
