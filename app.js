@@ -1406,7 +1406,7 @@ window.addEventListener('paste', (e) => {
 });
 
 backBtn.addEventListener('click', () => {
-  if (confirm('Start over? Your captions will be lost.')) {
+  if (confirm('Start over? Your work will be lost, like tears in the rain.')) {
     showUpload();
   }
 });
@@ -1766,7 +1766,9 @@ class ImageObject {
 
   updateStyle(patch) {
     Object.assign(this.style, patch);
-    this.style.size = Math.max(1, Math.min(100, this.style.size || DROPPED_IMAGE_OBJECT_SIZE_PCT));
+    const minSize = parseFloat(ctrlSize?.min || '1');
+    const maxSize = parseFloat(ctrlSize?.max || '25');
+    this.style.size = Math.max(minSize, Math.min(maxSize, this.style.size || DROPPED_IMAGE_OBJECT_SIZE_PCT));
     this._applyStyle();
     this._positionEl();
     markPreviewSourceDirty();
@@ -2210,13 +2212,16 @@ function startRotate(e, tf) {
 }
 
 function startResize(e, tf) {
+  const getObjectSizeBounds = () => ({
+    min: parseFloat(ctrlSize?.min || '1'),
+    max: parseFloat(ctrlSize?.max || '25'),
+  });
   const rect = canvasContainer.getBoundingClientRect();
   const centerX = rect.left + tf.xPct * canvasContainer.offsetWidth;
   const centerY = rect.top + tf.yPct * canvasContainer.offsetHeight;
   const startDist = Math.max(1, Math.hypot(e.clientX - centerX, e.clientY - centerY));
   const origSize = tf.style.size || 5;
-  const minSize = tf.type === 'text' ? parseFloat(ctrlSize?.min || '1') : 1;
-  const maxSize = tf.type === 'text' ? parseFloat(ctrlSize?.max || '25') : 100;
+  const { min: minSize, max: maxSize } = getObjectSizeBounds();
   tf.el.classList.add('resizing');
 
   function onMove(ev) {
@@ -2225,10 +2230,8 @@ function startResize(e, tf) {
     const rawSize = origSize * (dist / startDist);
     const size = Math.max(minSize, Math.min(maxSize, rawSize));
     tf.updateStyle({ size });
-    if (tf.type === 'text') {
-      if (ctrlSize) ctrlSize.value = String(size);
-      if (ctrlSizeVal) ctrlSizeVal.textContent = `${size}%`;
-    }
+    if (ctrlSize) ctrlSize.value = String(size);
+    if (ctrlSizeVal) ctrlSizeVal.textContent = `${size}%`;
   }
 
   function onUp() {
@@ -2671,11 +2674,7 @@ ctrlFont.addEventListener('change', () => {
 ctrlSize.addEventListener('input', () => {
   const v = parseFloat(ctrlSize.value);
   ctrlSizeVal.textContent = v + '%';
-  if (state.selectedObject?.type === 'image') {
-    applyObjectControlsToSelected({ size: v });
-  } else {
-    applyControlsToSelected({ size: v });
-  }
+  applyObjectControlsToSelected({ size: v });
   clearPreset();
 });
 
