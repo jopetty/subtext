@@ -369,6 +369,71 @@ const FILTERS = {
     },
   },
 
+  redshift: {
+    label: 'Redshift',
+    cssPreview: (t) =>
+      `grayscale(${t}) sepia(${t}) saturate(${1 + 2.2*t}) hue-rotate(${-38*t}deg)`,
+    apply(data, w, h, t) {
+      const blend = Math.max(0, Math.min(1, t));
+      const invBlend = 1 - blend;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const lm = 0.299 * r + 0.587 * g + 0.114 * b;
+        data[i] = clamp255(r * invBlend + lm * blend);
+        data[i + 1] = clamp255(g * invBlend);
+        data[i + 2] = clamp255(b * invBlend);
+      }
+    },
+  },
+
+  dithering: {
+    label: 'Dithering',
+    cssPreview: (t) =>
+      `contrast(${1 + 0.22*t}) saturate(${1 - 0.35*t})`,
+    apply(data, w, h, t, _params, pixelScale = 1) {
+      const blend = Math.max(0, Math.min(1, t));
+      const invBlend = 1 - blend;
+      const strength = Math.min(1, blend * 1.35);
+      const levels = Math.max(2, Math.round(8 - 7 * strength));
+      const step = 255 / (levels - 1);
+      const patternScale = Math.max(1, Math.round(pixelScale || 1));
+      const bayer4 = [
+        [0,  8,  2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1,  9],
+        [15, 7, 13, 5],
+      ];
+      const jitterAmp = step * (0.5 + 0.55 * strength) * strength;
+      const monoMix = Math.max(0, (strength - 0.55) / 0.45) * 0.45;
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const threshold = (bayer4[(Math.floor(y / patternScale)) & 3][(Math.floor(x / patternScale)) & 3] / 15) - 0.5;
+          const jitter = threshold * jitterAmp * 1.12;
+
+          const sr = data[i];
+          const sg = data[i + 1];
+          const sb = data[i + 2];
+          const lm = 0.299 * sr + 0.587 * sg + 0.114 * sb;
+          const r = sr * (1 - monoMix) + lm * monoMix;
+          const g = sg * (1 - monoMix) + lm * monoMix;
+          const b = sb * (1 - monoMix) + lm * monoMix;
+
+          const dr = clamp255(Math.round((r + jitter) / step) * step);
+          const dg = clamp255(Math.round((g + jitter) / step) * step);
+          const db = clamp255(Math.round((b + jitter) / step) * step);
+
+          data[i]     = clamp255(sr * invBlend + dr * blend);
+          data[i + 1] = clamp255(sg * invBlend + dg * blend);
+          data[i + 2] = clamp255(sb * invBlend + db * blend);
+        }
+      }
+    },
+  },
+
   twilight: {
     label: 'Twilight',
     cssPreview: (t) =>
@@ -704,6 +769,8 @@ const FILTERS = {
 // Default values for vibe-specific extra params
 const FILTER_PARAM_DEFAULTS = {
   film:        { grain: 10 },
+  redshift:    {},
+  dithering:   {},
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
   twilight:    {},
   mexico:      {},
@@ -879,7 +946,7 @@ async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelSc
 function defaultStyle() {
   return state.lastStyle
     ? { ...state.lastStyle }
-    : { ...PRESETS.classic, blur: 0, bgColor: null };
+    : { ...PRESETS.classic, blur: 0, glow: 0, opacity: 1, bgColor: null };
 }
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -918,6 +985,8 @@ const ctrlLineHeightVal = document.getElementById('ctrl-line-height-val');
 const ctrlBold         = document.getElementById('ctrl-bold');
 const ctrlItalic       = document.getElementById('ctrl-italic');
 const ctrlBlur         = document.getElementById('ctrl-blur');
+const ctrlGlow         = document.getElementById('ctrl-glow');
+const ctrlOpacity      = document.getElementById('ctrl-opacity');
 const ctrlBgEnabled    = document.getElementById('ctrl-bg-enabled');
 const ctrlBgColor      = document.getElementById('ctrl-bg-color');
 const ctrlFgColor      = document.getElementById('ctrl-fg-color');
@@ -1205,6 +1274,89 @@ function getObjectBlurRadiusPx(blurAmount, scaleFactor) {
   // Keep object blur visibly present in pixel-rendered preview/export while
   // preserving the existing 0..1 control range.
   return blurAmount * Math.max(1, scaleFactor) * 6;
+}
+
+function getObjectGlowRadiusPx(glowAmount, scaleFactor) {
+  if (!glowAmount || glowAmount <= 0) return 0;
+  // Glow uses a wider radius than blur so small slider changes are visible.
+  return glowAmount * Math.max(1, scaleFactor) * 16;
+}
+
+function getPreviewGlowRadiusPx(glowAmount, previewScale, opts = {}) {
+  const { forDom = false } = opts;
+  let px = getObjectGlowRadiusPx(glowAmount, previewScale);
+  if (forDom && isMobileViewport()) {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    px /= dpr;
+  }
+  return px;
+}
+
+function colorToRgb(color, fallback = [255, 255, 255]) {
+  const c = (color || '').trim();
+  if (!c) return fallback;
+  if (c.startsWith('#') && c.length === 7) {
+    const r = parseInt(c.slice(1, 3), 16);
+    const g = parseInt(c.slice(3, 5), 16);
+    const b = parseInt(c.slice(5, 7), 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return [r, g, b];
+  }
+  if (c.startsWith('#') && c.length === 4) {
+    const r = parseInt(c[1] + c[1], 16);
+    const g = parseInt(c[2] + c[2], 16);
+    const b = parseInt(c[3] + c[3], 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return [r, g, b];
+  }
+  return fallback;
+}
+
+function colorWithAlpha(color, alpha = 1) {
+  const [r, g, b] = colorToRgb(color, [255, 255, 255]);
+  const a = Math.max(0, Math.min(1, alpha));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function clampObjectOpacity(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(0.1, Math.min(1, n));
+}
+
+function blurCurrentAlphaIntoGlow(ctx, w, h, color, radiusPx) {
+  if (!radiusPx || radiusPx <= 0) return;
+  const [gr, gg, gb] = colorToRgb(color);
+  const alphaBoost = Math.max(2.1, Math.min(5.2, 2.1 + radiusPx * 0.08));
+  const id = ctx.getImageData(0, 0, w, h);
+  const d = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    // Keep RGB pinned to glow color even at alpha=0 so blur kernels
+    // do not pull in black fringes from transparent pixels.
+    d[i] = gr;
+    d[i + 1] = gg;
+    d[i + 2] = gb;
+    if (a === 0) continue;
+    d[i + 3] = Math.min(255, Math.round(a * alphaBoost));
+  }
+  ctx.putImageData(id, 0, 0);
+  softBlur(ctx, w, h, radiusPx);
+
+  // Post-boost halo alpha so exported glow more closely matches DOM
+  // drop-shadow visibility, especially on thin glyph strokes.
+  const out = ctx.getImageData(0, 0, w, h);
+  const od = out.data;
+  const gain = Math.max(1.3, Math.min(3.0, 1.3 + radiusPx * 0.026));
+  for (let i = 0; i < od.length; i += 4) {
+    // Re-pin color after blur pass for chroma stability.
+    od[i] = gr;
+    od[i + 1] = gg;
+    od[i + 2] = gb;
+    const a = od[i + 3];
+    if (a === 0) continue;
+    const lifted = Math.pow(a / 255, 0.8) * 255 * gain;
+    od[i + 3] = Math.min(255, Math.round(lifted));
+  }
+  ctx.putImageData(out, 0, 0);
 }
 
 function isMobileViewport() {
@@ -1504,11 +1656,20 @@ class TextObject {
     inner.style.fontStyle     = s.italic ? 'italic' : 'normal';
     inner.style.textAlign     = s.align;
     inner.style.color         = s.fgColor;
-    inner.style.backgroundColor = s.bgColor || 'transparent';
+    const opacity = clampObjectOpacity(s.opacity ?? 1);
+    inner.style.opacity = `${opacity}`;
+    inner.style.backgroundColor = s.bgColor ? colorWithAlpha(s.bgColor, opacity) : 'transparent';
 
-    // Blur (defocus) effect
+    // Blur + glow (halo) effects
     const previewBlur = getPreviewTextBlurPx(s.blur, previewScale, { forDom: true });
-    inner.style.filter = previewBlur > 0 ? `blur(${previewBlur.toFixed(3)}px)` : '';
+    const glowPx = getPreviewGlowRadiusPx(s.glow, previewScale, { forDom: true });
+    const filterParts = [];
+    if (previewBlur > 0) filterParts.push(`blur(${previewBlur.toFixed(3)}px)`);
+    if (glowPx > 0) {
+      filterParts.push(`drop-shadow(0 0 ${glowPx.toFixed(3)}px ${s.fgColor || '#ffffff'})`);
+      filterParts.push(`drop-shadow(0 0 ${(glowPx * 0.65).toFixed(3)}px ${s.fgColor || '#ffffff'})`);
+    }
+    inner.style.filter = filterParts.join(' ');
 
     // Text outline using -webkit-text-stroke
     if (s.outlineWidth > 0) {
@@ -1651,8 +1812,9 @@ class ImageObject {
     this.xPct = xPct;
     this.yPct = yPct;
     this.aspect = opts.aspect || 1;
+    this.isVector = !!opts.isVector;
     this.objectUrl = opts.objectUrl || null;
-    this.style = { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0, ...opts.style };
+    this.style = { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0, glow: 0, opacity: 1, ...opts.style };
     this.el = null;
     this.imgEl = null;
     this.delEl = null;
@@ -1713,12 +1875,30 @@ class ImageObject {
     const heightPx = Math.max(8, Math.round(widthPx / Math.max(0.01, this.aspect)));
     this.imgEl.style.width = `${widthPx}px`;
     this.imgEl.style.height = `${heightPx}px`;
-    this.el.style.backgroundColor = this.style.bgColor || 'transparent';
+    const opacity = clampObjectOpacity(this.style.opacity ?? 1);
+    this.el.style.backgroundColor = this.style.bgColor ? colorWithAlpha(this.style.bgColor, opacity) : 'transparent';
     const previewScale = (baseImage.offsetWidth > 0)
       ? (state.imageNaturalW / baseImage.offsetWidth)
       : 1;
     const previewBlur = getPreviewTextBlurPx(this.style.blur, previewScale, { forDom: true });
-    this.imgEl.style.filter = previewBlur > 0 ? `blur(${previewBlur.toFixed(3)}px)` : '';
+    const previewGlow = getPreviewGlowRadiusPx(this.style.glow, previewScale, { forDom: true });
+    if (this.isVector) {
+      const filters = [];
+      if (previewBlur > 0) filters.push(`blur(${previewBlur.toFixed(3)}px)`);
+      if (previewGlow > 0) {
+        filters.push(`drop-shadow(0 0 ${previewGlow.toFixed(3)}px rgba(255,255,255,0.95))`);
+        filters.push(`drop-shadow(0 0 ${(previewGlow * 0.6).toFixed(3)}px rgba(255,255,255,0.8))`);
+      }
+      this.imgEl.style.filter = filters.join(' ');
+      this.imgEl.style.opacity = `${opacity}`;
+      this.el.style.boxShadow = '';
+    } else {
+      this.imgEl.style.filter = previewBlur > 0 ? `blur(${previewBlur.toFixed(3)}px)` : '';
+      this.imgEl.style.opacity = `${opacity}`;
+      this.el.style.boxShadow = previewGlow > 0
+        ? `0 0 ${previewGlow.toFixed(2)}px rgba(255,255,255,0.85)`
+        : '';
+    }
   }
 
   _positionEl() {
@@ -1841,7 +2021,7 @@ function addTextObject(xPct, yPct) {
 // Backward-compatible alias while text remains the only object type.
 const addTextField = addTextObject;
 
-function addImageObjectFromBlob(blob, xPct = 0.5, yPct = 0.5) {
+function addImageObjectFromBlob(blob, xPct = 0.5, yPct = 0.5, opts = {}) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(blob);
     const probe = new Image();
@@ -1852,7 +2032,8 @@ function addImageObjectFromBlob(blob, xPct = 0.5, yPct = 0.5) {
       const imageObj = new ImageObject(xPct, yPct, {
         objectUrl,
         aspect,
-        style: { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0 },
+        isVector: !!opts.isVector,
+        style: { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0, glow: 0, opacity: 1 },
       });
       state.objects.push(imageObj);
       selectField(imageObj);
@@ -1880,10 +2061,11 @@ function addImageObjectFromFile(file, opts = {}) {
   (async () => {
     try {
       // Keep SVG objects as SVG sources so they render as vectors in-editor.
-      const objectBlob = isSvgLikeFile(file)
+      const isVector = isSvgLikeFile(file);
+      const objectBlob = isVector
         ? file
         : await normalizeUploadImage(file);
-      await addImageObjectFromBlob(objectBlob, xPct, yPct);
+      await addImageObjectFromBlob(objectBlob, xPct, yPct, { isVector });
     } catch (err) {
       alert(err?.message || 'Could not open this image. Please try another format.');
     } finally {
@@ -2306,6 +2488,8 @@ function updatePanel() {
 
 function syncObjectControlsToStyle(s) {
   if (ctrlBlur) ctrlBlur.value = s.blur ?? 0;
+  if (ctrlGlow) ctrlGlow.value = s.glow ?? 0;
+  if (ctrlOpacity) ctrlOpacity.value = clampObjectOpacity(s.opacity ?? 1);
   if (ctrlBgEnabled) ctrlBgEnabled.checked = !!s.bgColor;
   if (ctrlBgColor) {
     if (s.bgColor) ctrlBgColor.value = s.bgColor;
@@ -2343,7 +2527,7 @@ function loadFieldStyle(tf) {
 
 function applyObjectControlsToSelected(patch) {
   if (!state.selectedObject) {
-    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0, bgColor: null };
+    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0, glow: 0, opacity: 1, bgColor: null };
     state.lastStyle = { ...base, ...patch };
     return;
   }
@@ -2357,7 +2541,7 @@ function applyControlsToSelected(patch) {
   if (!state.selectedObject) {
     // No field selected — accumulate changes into lastStyle so the next
     // new field picks them up instead of reverting to Classic defaults.
-    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0, bgColor: null };
+    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0, glow: 0, opacity: 1, bgColor: null };
     state.lastStyle = { ...base, ...patch };
     return;
   }
@@ -2743,6 +2927,20 @@ ctrlBlur.addEventListener('input', () => {
   clearPreset();
 });
 
+if (ctrlGlow) {
+  ctrlGlow.addEventListener('input', () => {
+    applyObjectControlsToSelected({ glow: parseFloat(ctrlGlow.value) });
+    clearPreset();
+  });
+}
+
+if (ctrlOpacity) {
+  ctrlOpacity.addEventListener('input', () => {
+    applyObjectControlsToSelected({ opacity: clampObjectOpacity(parseFloat(ctrlOpacity.value)) });
+    clearPreset();
+  });
+}
+
 if (ctrlBgColor) {
   ctrlBgColor.addEventListener('input', () => {
     if (ctrlBgEnabled && !ctrlBgEnabled.checked) ctrlBgEnabled.checked = true;
@@ -3113,16 +3311,13 @@ function shouldRefreshPreviewForSelectionChange() {
   return state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
 }
 
-function drawPreviewObjectLayers(ctx, w, h) {
+function drawPreviewObjectLayers(ctx, w, h, opts = {}) {
+  const { bypassSelectedObject = false } = opts;
   const renderedW = baseImage.offsetWidth || 1;
   const renderedH = baseImage.offsetHeight || 1;
   const previewScale = state.imageNaturalW > 0 ? (state.imageNaturalW / w) : 1;
   const sx = w / renderedW;
   const sy = h / renderedH;
-  const containerRect = canvasContainer.getBoundingClientRect();
-  const imgRect = baseImage.getBoundingClientRect();
-  const imgOffsetX = imgRect.left - containerRect.left;
-  const imgOffsetY = imgRect.top  - containerRect.top;
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = w;
   tempCanvas.height = h;
@@ -3134,15 +3329,30 @@ function drawPreviewObjectLayers(ctx, w, h) {
   ];
   for (const tf of orderedObjects) {
     if (tf.type === 'image') {
-      if (isObjectFilterBypassed(tf)) continue;
+      if (bypassSelectedObject && isObjectFilterBypassed(tf)) continue;
       const s = tf.style;
-      const cx = (tf.xPct * canvasContainer.offsetWidth  - imgOffsetX) * sx;
-      const cy = (tf.yPct * canvasContainer.offsetHeight - imgOffsetY) * sy;
+      const opacity = clampObjectOpacity(s.opacity ?? 1);
+      const cx = tf.xPct * w;
+      const cy = tf.yPct * h;
       const objW = (s.size / 100) * w;
       const objH = objW / Math.max(0.01, tf.aspect || 1);
       const previewBlur = getObjectBlurRadiusPx(s.blur, previewScale);
+      const previewGlow = getObjectGlowRadiusPx(s.glow, previewScale);
       const rotDeg = s.rotateDeg || 0;
       tc.clearRect(0, 0, w, h);
+      if (previewGlow > 0) {
+        tc.save();
+        tc.translate(cx, cy);
+        if (Math.abs(rotDeg) >= 0.01) tc.rotate(rotDeg * Math.PI / 180);
+        if (tf.isVector) {
+          tc.drawImage(tf.imgEl, -objW / 2, -objH / 2, objW, objH);
+        } else {
+          tc.fillStyle = '#ffffff';
+          tc.fillRect(-objW / 2, -objH / 2, objW, objH);
+        }
+        tc.restore();
+        blurCurrentAlphaIntoGlow(tc, w, h, '#ffffff', previewGlow);
+      }
       tc.save();
       tc.translate(cx, cy);
       if (Math.abs(rotDeg) >= 0.01) tc.rotate(rotDeg * Math.PI / 180);
@@ -3153,14 +3363,18 @@ function drawPreviewObjectLayers(ctx, w, h) {
       tc.drawImage(tf.imgEl, -objW / 2, -objH / 2, objW, objH);
       tc.restore();
       if (previewBlur > 0) softBlur(tc, w, h, previewBlur);
+      ctx.save();
+      ctx.globalAlpha = opacity;
       ctx.drawImage(tempCanvas, 0, 0);
+      ctx.restore();
       continue;
     }
     if (tf.type !== 'text') continue;
-    if (isObjectFilterBypassed(tf)) continue;
+    if (bypassSelectedObject && isObjectFilterBypassed(tf)) continue;
     const s = tf.style;
-    const cx = (tf.xPct * canvasContainer.offsetWidth  - imgOffsetX) * sx;
-    const cy = (tf.yPct * canvasContainer.offsetHeight - imgOffsetY) * sy;
+    const opacity = clampObjectOpacity(s.opacity ?? 1);
+    const cx = tf.xPct * w;
+    const cy = tf.yPct * h;
     const fontSize = s.size / 100 * w;
     const lines = tf.innerEl.innerText.split('\n');
     const lineHeight = fontSize * (s.lineHeight ?? 1.2);
@@ -3177,8 +3391,23 @@ function drawPreviewObjectLayers(ctx, w, h) {
     tc.textAlign = s.align;
     tc.textBaseline = 'middle';
     const previewBlur = getObjectBlurRadiusPx(s.blur, previewScale);
+    const previewGlow = getObjectGlowRadiusPx(s.glow, previewScale);
     const rotDeg = s.rotateDeg || 0;
     if (Math.abs(rotDeg) < 0.01) {
+      if (previewGlow > 0) {
+        lines.forEach((line, i) => {
+          const ly = startY + i * lineHeight;
+          if (s.outlineWidth > 0) {
+            tc.lineWidth = s.outlineWidth;
+            tc.strokeStyle = '#ffffff';
+            tc.lineJoin = 'round';
+            tc.strokeText(line, lx, ly);
+          }
+          tc.fillStyle = '#ffffff';
+          tc.fillText(line, lx, ly);
+        });
+        blurCurrentAlphaIntoGlow(tc, w, h, s.fgColor || '#ffffff', previewGlow);
+      }
       if (s.bgColor) {
         const bgW = tf.innerEl.offsetWidth * sx;
         const bgH = tf.innerEl.offsetHeight * sy;
@@ -3207,6 +3436,24 @@ function drawPreviewObjectLayers(ctx, w, h) {
       tc.save();
       tc.translate(cx, cy);
       tc.rotate(rotRad);
+      if (previewGlow > 0) {
+        lines.forEach((line, i) => {
+          const ly = localStartY + i * lineHeight;
+          if (s.outlineWidth > 0) {
+            tc.lineWidth = s.outlineWidth;
+            tc.strokeStyle = '#ffffff';
+            tc.lineJoin = 'round';
+            tc.strokeText(line, localX, ly);
+          }
+          tc.fillStyle = '#ffffff';
+          tc.fillText(line, localX, ly);
+        });
+        tc.restore();
+        blurCurrentAlphaIntoGlow(tc, w, h, s.fgColor || '#ffffff', previewGlow);
+        tc.save();
+        tc.translate(cx, cy);
+        tc.rotate(rotRad);
+      }
       if (s.bgColor) {
         const bgW = tf.innerEl.offsetWidth * sx;
         const bgH = tf.innerEl.offsetHeight * sy;
@@ -3227,7 +3474,10 @@ function drawPreviewObjectLayers(ctx, w, h) {
       tc.restore();
     }
     if (previewBlur > 0) softBlur(tc, w, h, previewBlur);
+    ctx.save();
+    ctx.globalAlpha = opacity;
     ctx.drawImage(tempCanvas, 0, 0);
+    ctx.restore();
   }
 }
 
@@ -3566,6 +3816,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   }
 
   const { w, h } = computePreviewTargetSize(quality);
+  const bypassSelectedObject = quality === 'interactive';
   const t = state.filter.intensity / 100;
 
   ensureVaporSrcContext();
@@ -3590,7 +3841,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
       vaporSrcCtx.clearRect(0, 0, w, h);
       vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
       if (state.filter.applyOnTop) {
-        drawPreviewObjectLayers(vaporSrcCtx, w, h);
+        drawPreviewObjectLayers(vaporSrcCtx, w, h, { bypassSelectedObject });
       }
       sourceBuildMs = performance.now() - sourceBuildStart;
       previewGpuSourceCache.w = w;
@@ -3649,7 +3900,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
     vaporSrcCtx.clearRect(0, 0, w, h);
     vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
     if (state.filter.applyOnTop) {
-      drawPreviewObjectLayers(vaporSrcCtx, w, h);
+      drawPreviewObjectLayers(vaporSrcCtx, w, h, { bypassSelectedObject });
     }
     previewData = vaporSrcCtx.getImageData(0, 0, w, h);
     sourceBuildMs = performance.now() - sourceBuildStart;
@@ -3993,6 +4244,8 @@ presetBtns.forEach(btn => {
     const {
       size: _ignored,
       blur: _ignoredBlur,
+      glow: _ignoredGlow,
+      opacity: _ignoredOpacity,
       bgColor: _ignoredBg,
       rotateDeg: _ignoredRotate,
       ...presetWithoutSize
@@ -4065,7 +4318,7 @@ function softBlur(ctx, w, h, radius) {
 async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   if (state.filter.name === 'none') return;
   const imgData = ctx.getImageData(0, 0, w, h);
-  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth') ? pixelScale : 1;
+  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth' || state.filter.name === 'dithering') ? pixelScale : 1;
   const result = await runFilterInWorker(
     state.filter.name,
     imgData,
@@ -4081,11 +4334,6 @@ async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
 }
 
 function drawObjectLayersForExport(ctx, nw, nh, scale) {
-  const containerRect = canvasContainer.getBoundingClientRect();
-  const imgRect = baseImage.getBoundingClientRect();
-  const imgOffsetX = imgRect.left - containerRect.left;
-  const imgOffsetY = imgRect.top  - containerRect.top;
-
   // Reuse one scratch canvas for all text layers.
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width  = nw;
@@ -4099,14 +4347,27 @@ function drawObjectLayersForExport(ctx, nw, nh, scale) {
   for (const tf of orderedObjects) {
     if (tf.type === 'image') {
       const s = tf.style;
-      const cxRendered = tf.xPct * canvasContainer.offsetWidth  - imgOffsetX;
-      const cyRendered = tf.yPct * canvasContainer.offsetHeight - imgOffsetY;
-      const cx = cxRendered * scale;
-      const cy = cyRendered * scale;
+      const opacity = clampObjectOpacity(s.opacity ?? 1);
+      const cx = tf.xPct * nw;
+      const cy = tf.yPct * nh;
       const objW = (s.size / 100) * nw;
       const objH = objW / Math.max(0.01, tf.aspect || 1);
+      const glowPx = getObjectGlowRadiusPx(s.glow, scale);
       const rotDeg = s.rotateDeg || 0;
       tc.clearRect(0, 0, nw, nh);
+      if (glowPx > 0) {
+        tc.save();
+        tc.translate(cx, cy);
+        if (Math.abs(rotDeg) >= 0.01) tc.rotate(rotDeg * Math.PI / 180);
+        if (tf.isVector) {
+          tc.drawImage(tf.imgEl, -objW / 2, -objH / 2, objW, objH);
+        } else {
+          tc.fillStyle = '#ffffff';
+          tc.fillRect(-objW / 2, -objH / 2, objW, objH);
+        }
+        tc.restore();
+        blurCurrentAlphaIntoGlow(tc, nw, nh, '#ffffff', glowPx);
+      }
       tc.save();
       tc.translate(cx, cy);
       if (Math.abs(rotDeg) >= 0.01) tc.rotate(rotDeg * Math.PI / 180);
@@ -4119,17 +4380,20 @@ function drawObjectLayersForExport(ctx, nw, nh, scale) {
       if (s.blur > 0) {
         softBlur(tc, nw, nh, getObjectBlurRadiusPx(s.blur, scale));
       }
+      ctx.save();
+      ctx.globalAlpha = opacity;
       ctx.drawImage(tempCanvas, 0, 0);
+      ctx.restore();
       continue;
     }
     if (tf.type !== 'text') continue;
     const s = tf.style;
+    const opacity = clampObjectOpacity(s.opacity ?? 1);
 
-    // Compute center position in natural image coords
-    const cxRendered = tf.xPct * canvasContainer.offsetWidth  - imgOffsetX;
-    const cyRendered = tf.yPct * canvasContainer.offsetHeight - imgOffsetY;
-    const cx = cxRendered * scale;
-    const cy = cyRendered * scale;
+    // Compute center position in natural image coords from normalized object
+    // coordinates so export aligns with editor regardless of DOM offsets.
+    const cx = tf.xPct * nw;
+    const cy = tf.yPct * nh;
 
     // size is % of image width; apply directly against natural image width
     const fontSize = s.size / 100 * nw;
@@ -4155,7 +4419,22 @@ function drawObjectLayersForExport(ctx, nw, nh, scale) {
     tc.font         = ctx.font;
     tc.textAlign    = s.align;
     tc.textBaseline = 'middle';
+    const glowPx = getObjectGlowRadiusPx(s.glow, scale);
     if (Math.abs(rotDeg) < 0.01) {
+      if (glowPx > 0) {
+        lines.forEach((line, i) => {
+          const ly = startY + i * lineHeight;
+          if (s.outlineWidth > 0) {
+            tc.lineWidth = s.outlineWidth * scale;
+            tc.strokeStyle = '#ffffff';
+            tc.lineJoin = 'round';
+            tc.strokeText(line, lx, ly);
+          }
+          tc.fillStyle = '#ffffff';
+          tc.fillText(line, lx, ly);
+        });
+        blurCurrentAlphaIntoGlow(tc, nw, nh, s.fgColor || '#ffffff', glowPx);
+      }
       if (s.bgColor) {
         const bgW = tf.innerEl.offsetWidth * scale;
         const bgH = tf.innerEl.offsetHeight * scale;
@@ -4186,6 +4465,24 @@ function drawObjectLayersForExport(ctx, nw, nh, scale) {
       tc.save();
       tc.translate(cx, cy);
       tc.rotate(rotRad);
+      if (glowPx > 0) {
+        lines.forEach((line, i) => {
+          const ly = localStartY + i * lineHeight;
+          if (s.outlineWidth > 0) {
+            tc.lineWidth = s.outlineWidth * scale;
+            tc.strokeStyle = '#ffffff';
+            tc.lineJoin = 'round';
+            tc.strokeText(line, localX, ly);
+          }
+          tc.fillStyle = '#ffffff';
+          tc.fillText(line, localX, ly);
+        });
+        tc.restore();
+        blurCurrentAlphaIntoGlow(tc, nw, nh, s.fgColor || '#ffffff', glowPx);
+        tc.save();
+        tc.translate(cx, cy);
+        tc.rotate(rotRad);
+      }
       if (s.bgColor) {
         const bgW = tf.innerEl.offsetWidth * scale;
         const bgH = tf.innerEl.offsetHeight * scale;
@@ -4211,7 +4508,10 @@ function drawObjectLayersForExport(ctx, nw, nh, scale) {
     if (s.blur > 0) {
       softBlur(tc, nw, nh, getObjectBlurRadiusPx(s.blur, scale));
     }
+    ctx.save();
+    ctx.globalAlpha = opacity;
     ctx.drawImage(tempCanvas, 0, 0);
+    ctx.restore();
   }
 }
 
