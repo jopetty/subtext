@@ -926,7 +926,7 @@ const ctrlOutlineWidth = document.getElementById('ctrl-outline-width');
 const ctrlOutlineWidthVal = document.getElementById('ctrl-outline-width-val');
 const ctrlAutoContrast = document.getElementById('ctrl-auto-contrast');
 const alignBtns        = document.querySelectorAll('.align-btn');
-const presetBtns       = document.querySelectorAll('.preset-btn');
+const presetBtns       = document.querySelectorAll('.preset-chip');
 const uploadStatus     = document.getElementById('upload-status');
 const uploadStatusText = document.getElementById('upload-status-text');
 
@@ -2652,6 +2652,24 @@ function syncFontSelectDisplay() {
 function switchPanelTab(tabName) {
   bottomPanel.dataset.panel = tabName;
   panelTabBtns.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+
+  // Ensure horizontally scrollable chip rows always start flush-left when
+  // their section is shown, avoiding browser-restored mid-scroll clipping.
+  const resetChipScroll = () => {
+    const scrollerSelector =
+      tabName === 'typography' ? '.preset-chips'
+      : tabName === 'vibe' ? '.vibe-chips'
+      : null;
+    if (!scrollerSelector) return;
+    const scroller = document.querySelector(scrollerSelector);
+    if (!scroller) return;
+    scroller.scrollLeft = 0;
+    requestAnimationFrame(() => {
+      scroller.scrollLeft = 0;
+    });
+  };
+  requestAnimationFrame(resetChipScroll);
+
   requestAnimationFrame(() => {
     if (state.imageLoaded) {
       fitImageToWrapper();
@@ -2724,7 +2742,7 @@ if (ctrlBgEnabled) {
 
 // ─── Image filter controls ─────────────────────────────────────────────────────
 
-const filterChips          = document.querySelectorAll('.filter-chip');
+const filterChips          = document.querySelectorAll('.vibe-chip');
 const filterIntensityRow   = document.getElementById('filter-intensity-row');
 const filterIntensityLabel = document.getElementById('filter-intensity-label');
 const filterLayerRow       = document.getElementById('filter-layer-row');
@@ -4413,9 +4431,21 @@ if ('serviceWorker' in navigator) {
     location.hostname === 'localhost' ||
     location.hostname === '127.0.0.1' ||
     location.hostname === '[::1]';
-  if (location.protocol === 'https:' || isLocalhost) {
-    window.addEventListener('load', () => {
+  window.addEventListener('load', async () => {
+    if (isLocalhost) {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((reg) => reg.unregister()));
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((key) => caches.delete(key)));
+        }
+      } catch {}
+      return;
+    }
+
+    if (location.protocol === 'https:') {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
-    });
-  }
+    }
+  });
 }

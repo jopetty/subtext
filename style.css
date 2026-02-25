@@ -200,6 +200,10 @@
 
 @media (max-width: 769px) {
   :root {
+    --mobile-chip-scroll-inset: 0.85rem;
+  }
+
+  :root {
     --panel-h: 288px;
   }
 }
@@ -472,8 +476,8 @@ html, body {
   background: var(--border);
 }
 
-/* Match preset-pill hover behavior across button controls. */
-:where(.icon-btn, .top-action-btn, .font-select-trigger, .style-btn, .align-btn, .filter-chip, .preset-btn):hover:not(.active):not(:disabled) {
+/* Match chip hover behavior across button controls. */
+:where(.icon-btn, .top-action-btn, .font-select-trigger, .style-btn, .align-btn, .control-chip):hover:not(.active):not(:disabled) {
   border-color: var(--ink-muted);
 }
 
@@ -928,13 +932,17 @@ html, body {
   flex-wrap: wrap;
 }
 
-.preset-pills {
+.chip-scroller {
+  display: block;
+}
+
+.chip-track {
   display: flex;
   gap: 0.4rem;
   flex-wrap: wrap;
 }
 
-.preset-btn {
+.control-chip {
   border: 1.5px solid var(--border);
   border-radius: 999px;
   background: transparent;
@@ -950,17 +958,17 @@ html, body {
   line-height: 1.4;
 }
 
-.preset-btn:hover:not(.active) {
+.control-chip:hover:not(.active) {
   border-color: var(--ink-muted);
 }
 
-.preset-btn.active {
+.control-chip.active {
   background: var(--ink);
   color: var(--bg);
   border-color: var(--ink);
 }
 
-.preset-btn:active {
+.control-chip:active {
   opacity: 0.72;
 }
 
@@ -1384,7 +1392,7 @@ input[type="range"]::-moz-range-thumb {
   display: none; /* shown only on desktop (or mobile vibe tab) */
 }
 
-.controls-row--filter-chips {
+.controls-row--vibe-chips {
   flex-wrap: wrap;
 }
 
@@ -1400,41 +1408,6 @@ input[type="range"]::-moz-range-thumb {
 .controls-row--split .control-group {
   flex: 1;
   min-width: 0;
-}
-
-.filter-chips {
-  display: flex;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-
-.filter-chip {
-  border: 1.5px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: 0.8rem;
-  padding: 0.22rem 0.8rem;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-  white-space: nowrap;
-  letter-spacing: 0.01em;
-  line-height: 1.4;
-}
-
-.filter-chip:hover:not(.active) {
-  border-color: var(--ink-muted);
-}
-
-.filter-chip.active {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
-}
-
-.filter-chip:active {
-  opacity: 0.72;
 }
 
 /* ===== iOS SAVE OVERLAY ===== */
@@ -1639,11 +1612,15 @@ input[type="range"]::-moz-range-thumb {
   }
 
   #bottom-panel[data-panel="vibe"] #filter-section {
-    height: 100%;
-    overflow-y: auto;
+    height: auto;
+    overflow: visible;
     opacity: 1;
     pointer-events: auto;
     padding-top: 0.4rem;
+  }
+
+  #bottom-panel[data-panel="vibe"] {
+    overflow-y: auto;
   }
 
   /* Compact form controls — save vertical space in the mobile tray */
@@ -1689,60 +1666,48 @@ input[type="range"]::-moz-range-thumb {
     flex-wrap: nowrap;
   }
 
-  .preset-pills {
-    width: calc(100% + 1.7rem);
+  .chip-scroller {
+    box-sizing: border-box;
+    width: calc(100% + (var(--mobile-chip-scroll-inset) * 2));
     max-width: none;
-    margin-left: -0.85rem;
-    margin-right: -0.85rem;
-    padding: 0 0.85rem;
-    flex-wrap: nowrap;
+    margin-left: calc(var(--mobile-chip-scroll-inset) * -1);
+    margin-right: calc(var(--mobile-chip-scroll-inset) * -1);
+    padding: 0;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
 
-  .preset-pills::-webkit-scrollbar {
+  .chip-scroller::-webkit-scrollbar {
     display: none;
   }
 
-  .preset-btn {
+  .chip-track {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+    padding: 0 var(--mobile-chip-scroll-inset);
+    gap: 0.4rem;
+    flex-wrap: nowrap;
+  }
+
+  .control-chip {
     flex: 0 0 auto;
   }
 
-  .controls-row--filter-chips {
+  .controls-row--vibe-chips {
     flex-wrap: nowrap;
     overflow: visible;
   }
 
-  .filter-chips {
-    width: 100%;
-    max-width: 100%;
-    margin-left: 0;
-    margin-right: 0;
-    padding: 0 0 2px;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    scroll-padding-inline: 0.85rem;
-    scroll-snap-type: x proximity;
+  .vibe-chips-track {
+    padding: 0 var(--mobile-chip-scroll-inset) 2px;
   }
 
-  .filter-chips::-webkit-scrollbar {
-    display: none;
-  }
-
-  .filter-chips::before,
-  .filter-chips::after {
-    content: '';
-    flex: 0 0 0.85rem;
-  }
-
-  .filter-chip {
-    flex: 0 0 auto;
-    scroll-snap-align: start;
+  #bottom-panel[data-panel="vibe"] #filter-section {
+    overflow-x: visible;
   }
 }
 
