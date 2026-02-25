@@ -1884,6 +1884,8 @@ function deleteField(tf) {
     state.selectedObject = null;
   }
   markPreviewSourceDirty();
+  syncTextFieldLayering();
+  scheduleImageFilterRender({ settle: true });
   updatePanel();
 }
 
@@ -4193,6 +4195,8 @@ let _backKeyTapCount = 0;
 let _backKeyTimer = 0;
 let _addObjectKeyTapCount = 0;
 let _addObjectKeyTimer = 0;
+let _addTextKeyTapCount = 0;
+let _addTextKeyTimer = 0;
 let _uploadKeyTapCount = 0;
 let _uploadKeyTimer = 0;
 let _devKeyTapCount = 0;
@@ -4269,7 +4273,7 @@ window.addEventListener('keydown', async (e) => {
   if (!editorScreen.classList.contains('active')) return;
   if (!state.imageLoaded) return;
   const k = e.key.toLowerCase();
-  if (k !== 's' && k !== 'c' && k !== 'n' && k !== 'o') return;
+  if (k !== 's' && k !== 'c' && k !== 'n' && k !== 'o' && k !== 't') return;
   if (k === 'c' && !state.copyActionAvailable) return;
 
   const active = document.activeElement;
@@ -4278,10 +4282,12 @@ window.addEventListener('keydown', async (e) => {
     _copyKeyTapCount = 0;
     _backKeyTapCount = 0;
     _addObjectKeyTapCount = 0;
+    _addTextKeyTapCount = 0;
     if (_saveKeyTimer) { clearTimeout(_saveKeyTimer); _saveKeyTimer = 0; }
     if (_copyKeyTimer) { clearTimeout(_copyKeyTimer); _copyKeyTimer = 0; }
     if (_backKeyTimer) { clearTimeout(_backKeyTimer); _backKeyTimer = 0; }
     if (_addObjectKeyTimer) { clearTimeout(_addObjectKeyTimer); _addObjectKeyTimer = 0; }
+    if (_addTextKeyTimer) { clearTimeout(_addTextKeyTimer); _addTextKeyTimer = 0; }
     return;
   }
 
@@ -4346,6 +4352,28 @@ window.addEventListener('keydown', async (e) => {
     return;
   }
 
+  if (k === 't') {
+    _addTextKeyTapCount += 1;
+    if (_addTextKeyTapCount < 2) {
+      if (_addTextKeyTimer) clearTimeout(_addTextKeyTimer);
+      _addTextKeyTimer = setTimeout(() => {
+        _addTextKeyTapCount = 0;
+        _addTextKeyTimer = 0;
+      }, ACTION_KEY_DBL_TAP_MS);
+      return;
+    }
+    _addTextKeyTapCount = 0;
+    if (_addTextKeyTimer) {
+      clearTimeout(_addTextKeyTimer);
+      _addTextKeyTimer = 0;
+    }
+    e.preventDefault();
+    dismissHint();
+    const tf = addTextField(0.5, 0.5);
+    tf?.innerEl?.focus({ preventScroll: true });
+    return;
+  }
+
   _copyKeyTapCount += 1;
   if (_copyKeyTapCount < 2) {
     if (_copyKeyTimer) clearTimeout(_copyKeyTimer);
@@ -4387,6 +4415,44 @@ window.addEventListener('keydown', (e) => {
   }
   e.preventDefault();
   fileInput?.click();
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!editorScreen.classList.contains('active')) return;
+  if (!state.selectedObject) return;
+  const active = document.activeElement;
+  if (active?.isContentEditable) return;
+
+  const stepPx = e.shiftKey ? 5 : 1;
+  let dxPx = 0;
+  let dyPx = 0;
+  if (e.key === 'ArrowLeft') dxPx = -stepPx;
+  else if (e.key === 'ArrowRight') dxPx = stepPx;
+  else if (e.key === 'ArrowUp') dyPx = -stepPx;
+  else if (e.key === 'ArrowDown') dyPx = stepPx;
+  else return;
+
+  e.preventDefault();
+  const cw = Math.max(1, canvasContainer.offsetWidth);
+  const ch = Math.max(1, canvasContainer.offsetHeight);
+  const obj = state.selectedObject;
+  obj.xPct = Math.max(0, Math.min(1, obj.xPct + (dxPx / cw)));
+  obj.yPct = Math.max(0, Math.min(1, obj.yPct + (dyPx / ch)));
+  obj.reposition?.();
+  markPreviewSourceDirty();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!editorScreen.classList.contains('active')) return;
+  const active = document.activeElement;
+  if (active?.isContentEditable) return;
+  if (!state.selectedObject) return;
+  e.preventDefault();
+  deleteField(state.selectedObject);
 });
 
 window.addEventListener('keydown', (e) => {
