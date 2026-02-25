@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'subtext-v1';
+const CACHE_VERSION = 'subtext-v2';
 const CORE_ASSETS = [
   '/',
   '/index.html',

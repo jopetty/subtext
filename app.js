@@ -13,9 +13,9 @@ const state = {
   imageNaturalH: 0,
   imageObjectUrl: null,
   uploadBusy: false,
-  textFields: [],        // array of TextField objects
-  selectedField: null,   // currently selected TextField or null
-  lastStyle: null,       // style copied from last-edited field (for new field defaults)
+  objects: [],           // array of canvas object instances (TextObject, SpriteObject, ...)
+  selectedObject: null,  // currently selected object or null
+  lastStyle: null,       // style copied from last-edited object (for new object defaults)
   lastPreset: 'classic', // preset name of last-edited field (or null if manually edited)
   dragState: null,       // { field, startX, startY, origLeft, origTop }
   filter: { name: 'none', intensity: 75, params: {}, applyOnTop: false },
@@ -869,7 +869,9 @@ async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelSc
 }
 
 function defaultStyle() {
-  return state.lastStyle ? { ...state.lastStyle } : { ...PRESETS.classic, blur: 0 };
+  return state.lastStyle
+    ? { ...state.lastStyle }
+    : { ...PRESETS.classic, blur: 0, bgColor: null };
 }
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -890,6 +892,7 @@ const exportCanvas   = document.getElementById('export-canvas');
 const isMobile = navigator.maxTouchPoints > 0;
 
 const fontControls   = document.getElementById('font-controls');
+const objectControls = document.getElementById('object-controls');
 const bottomPanel    = document.getElementById('bottom-panel');
 const panelTabBtns   = document.querySelectorAll('.panel-tab');
 
@@ -903,6 +906,8 @@ const ctrlSizeVal      = document.getElementById('ctrl-size-val');
 const ctrlBold         = document.getElementById('ctrl-bold');
 const ctrlItalic       = document.getElementById('ctrl-italic');
 const ctrlBlur         = document.getElementById('ctrl-blur');
+const ctrlBgEnabled    = document.getElementById('ctrl-bg-enabled');
+const ctrlBgColor      = document.getElementById('ctrl-bg-color');
 const ctrlFgColor      = document.getElementById('ctrl-fg-color');
 const ctrlOutlineColor = document.getElementById('ctrl-outline-color');
 const ctrlOutlineWidth = document.getElementById('ctrl-outline-width');
@@ -1164,6 +1169,13 @@ function getPreviewTextBlurPx(blurAmount, previewScale, opts = {}) {
   return px;
 }
 
+function getObjectBlurRadiusPx(blurAmount, scaleFactor) {
+  if (!blurAmount || blurAmount <= 0) return 0;
+  // Keep object blur visibly present in pixel-rendered preview/export while
+  // preserving the existing 0..1 control range.
+  return blurAmount * Math.max(1, scaleFactor) * 6;
+}
+
 function isMobileViewport() {
   return window.matchMedia('(max-width: 769px)').matches;
 }
@@ -1177,9 +1189,9 @@ function showEditor() {
   editorDragEnterCount = 0;
   setThemeColors('editor');
   // Clear any leftover fields
-  state.textFields.forEach(tf => tf.el.remove());
-  state.textFields = [];
-  state.selectedField = null;
+  state.objects.forEach(tf => tf.el.remove());
+  state.objects = [];
+  state.selectedObject = null;
   state.lastStyle = null;
   markPreviewSourceDirty();
   // Always start on the Typography tab when opening the editor
@@ -1345,13 +1357,14 @@ backBtn.addEventListener('click', () => {
   }
 });
 
-// ─── TextField class ───────────────────────────────────────────────────────────
+// ─── TextObject class ──────────────────────────────────────────────────────────
 
 let _fieldId = 0;
 
-class TextField {
+class TextObject {
   constructor(xPct, yPct, style) {
     this.id = _fieldId++;
+    this.type = 'text';
     this.xPct = xPct;   // center-x as fraction of container width
     this.yPct = yPct;   // center-y as fraction of container height
     this.style = { ...style };
@@ -1420,6 +1433,7 @@ class TextField {
     inner.style.fontStyle     = s.italic ? 'italic' : 'normal';
     inner.style.textAlign     = s.align;
     inner.style.color         = s.fgColor;
+    inner.style.backgroundColor = s.bgColor || 'transparent';
 
     // Blur (defocus) effect
     const previewBlur = getPreviewTextBlurPx(s.blur, previewScale, { forDom: true });
@@ -1463,7 +1477,7 @@ class TextField {
     // On desktop, let the browser handle focus natively with no intervention.
     this.innerEl.addEventListener('pointerdown', (e) => {
       if (!isMobile) return;
-      if (state.selectedField !== this) {
+      if (state.selectedObject !== this) {
         e.preventDefault(); // blocks focus → no keyboard on first tap
         selectField(this);
       }
@@ -1481,7 +1495,7 @@ class TextField {
       if (e.target !== this.innerEl) {
         e.preventDefault();
         // Mobile: only focus (open keyboard) if the field is already selected.
-        if (!isMobile || state.selectedField === this) {
+        if (!isMobile || state.selectedObject === this) {
           this.innerEl.focus();
         } else {
           selectField(this);
@@ -1549,11 +1563,11 @@ class TextField {
 
 // ─── Field management ─────────────────────────────────────────────────────────
 
-function addTextField(xPct, yPct) {
+function addTextObject(xPct, yPct) {
   const style = defaultStyle();
-  const tf = new TextField(xPct, yPct, style);
+  const tf = new TextObject(xPct, yPct, style);
   tf.activePreset = state.lastPreset; // inherit last-used preset (null = manually edited)
-  state.textFields.push(tf);
+  state.objects.push(tf);
   markPreviewSourceDirty();
   // Don't call selectField() here — the focus event on innerEl will do it.
   // Use a short timeout so the element is fully laid out before focus.
@@ -1566,27 +1580,30 @@ function addTextField(xPct, yPct) {
   return tf;
 }
 
+// Backward-compatible alias while text remains the only object type.
+const addTextField = addTextObject;
+
 function deleteField(tf) {
   tf.el.remove();
-  state.textFields = state.textFields.filter(f => f !== tf);
-  if (state.selectedField === tf) {
-    state.selectedField = null;
+  state.objects = state.objects.filter(f => f !== tf);
+  if (state.selectedObject === tf) {
+    state.selectedObject = null;
   }
   markPreviewSourceDirty();
   updatePanel();
 }
 
 function selectField(tf) {
-  if (state.selectedField === tf) {
+  if (state.selectedObject === tf) {
     // Already selected — let the browser handle click/cursor natively
     return;
   }
-  if (state.selectedField) {
-    state.selectedField.deselect();
-    state.lastStyle  = { ...state.selectedField.style };
-    state.lastPreset = state.selectedField.activePreset ?? null;
+  if (state.selectedObject) {
+    state.selectedObject.deselect();
+    state.lastStyle  = { ...state.selectedObject.style };
+    state.lastPreset = state.selectedObject.activePreset ?? null;
   }
-  state.selectedField = tf;
+  state.selectedObject = tf;
   tf.select();
   markPreviewSourceDirty();
   syncTextFieldLayering();
@@ -1596,11 +1613,11 @@ function selectField(tf) {
 }
 
 function deselectAll() {
-  if (state.selectedField) {
-    state.lastStyle  = { ...state.selectedField.style };
-    state.lastPreset = state.selectedField.activePreset ?? null;
-    state.selectedField.deselect();
-    state.selectedField = null;
+  if (state.selectedObject) {
+    state.lastStyle  = { ...state.selectedObject.style };
+    state.lastPreset = state.selectedObject.activePreset ?? null;
+    state.selectedObject.deselect();
+    state.selectedObject = null;
   }
   markPreviewSourceDirty();
   syncTextFieldLayering();
@@ -1762,17 +1779,31 @@ function startDrag(e, tf) {
 
 // ─── Panel / controls ─────────────────────────────────────────────────────────
 
+function getSelectedTextObject() {
+  const obj = state.selectedObject;
+  return obj && obj.type === 'text' ? obj : null;
+}
+
 function updatePanel() {
+  const selectedText = getSelectedTextObject();
   if (ctrlAutoContrast) {
-    const hasSelectedField = !!state.selectedField;
-    ctrlAutoContrast.disabled = !hasSelectedField;
-    ctrlAutoContrast.title = hasSelectedField
+    ctrlAutoContrast.disabled = !selectedText;
+    ctrlAutoContrast.title = selectedText
       ? 'Automatically optimize text contrast for the selected field'
       : 'Select a text field first';
   }
 }
 
-function syncControlsToStyle(s, activePreset) {
+function syncObjectControlsToStyle(s) {
+  if (ctrlBlur) ctrlBlur.value = s.blur ?? 0;
+  if (ctrlBgEnabled) ctrlBgEnabled.checked = !!s.bgColor;
+  if (ctrlBgColor) {
+    if (s.bgColor) ctrlBgColor.value = s.bgColor;
+    ctrlBgColor.disabled = !s.bgColor;
+  }
+}
+
+function syncTextControlsToStyle(s, activePreset) {
   ctrlFont.value                  = s.font;
   syncFontSelectDisplay();
   ctrlSize.value                  = s.size;
@@ -1783,30 +1814,42 @@ function syncControlsToStyle(s, activePreset) {
   ctrlOutlineColor.value          = s.outlineColor;
   ctrlOutlineWidth.value          = s.outlineWidth;
   ctrlOutlineWidthVal.textContent = s.outlineWidth;
-  ctrlBlur.value                  = s.blur ?? 0;
   alignBtns.forEach(b => b.classList.toggle('active', b.dataset.align === s.align));
   presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === activePreset));
 }
 
 function loadFieldStyle(tf) {
-  syncControlsToStyle(tf.style, tf.activePreset);
+  syncObjectControlsToStyle(tf.style);
+  syncTextControlsToStyle(tf.style, tf.activePreset);
 }
 
-function applyControlsToSelected(patch) {
-  if (!state.selectedField) {
-    // No field selected — accumulate changes into lastStyle so the next
-    // new field picks them up instead of reverting to Classic defaults.
-    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0 };
+function applyObjectControlsToSelected(patch) {
+  if (!state.selectedObject) {
+    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0, bgColor: null };
     state.lastStyle = { ...base, ...patch };
     return;
   }
-  state.selectedField.updateStyle(patch);
-  state.lastStyle = { ...state.selectedField.style };
+  state.selectedObject.updateStyle(patch);
+  state.lastStyle = { ...state.selectedObject.style };
+}
+
+function applyControlsToSelected(patch) {
+  if (!state.selectedObject) {
+    // No field selected — accumulate changes into lastStyle so the next
+    // new field picks them up instead of reverting to Classic defaults.
+    const base = state.lastStyle ?? { ...PRESETS.classic, blur: 0, bgColor: null };
+    state.lastStyle = { ...base, ...patch };
+    return;
+  }
+  const selectedText = getSelectedTextObject();
+  if (!selectedText) return;
+  selectedText.updateStyle(patch);
+  state.lastStyle = { ...state.selectedObject.style };
 }
 
 // Clear the active preset indicator when the user manually edits any control.
 function clearPreset() {
-  if (state.selectedField) state.selectedField.activePreset = null;
+  if (state.selectedObject) state.selectedObject.activePreset = null;
   state.lastPreset = null;
   presetBtns.forEach(b => b.classList.remove('active'));
 }
@@ -1985,7 +2028,7 @@ function makePaletteContrastPair(bgLuma, palette, stepIndex) {
 }
 
 function applyAutoContrastToSelected() {
-  const tf = state.selectedField;
+  const tf = getSelectedTextObject();
   if (!tf) return;
 
   const rendered = renderFilteredPreviewToContrastCanvas();
@@ -2151,9 +2194,27 @@ ctrlItalic.addEventListener('click', () => {
 });
 
 ctrlBlur.addEventListener('input', () => {
-  applyControlsToSelected({ blur: parseFloat(ctrlBlur.value) });
+  applyObjectControlsToSelected({ blur: parseFloat(ctrlBlur.value) });
   clearPreset();
 });
+
+if (ctrlBgColor) {
+  ctrlBgColor.addEventListener('input', () => {
+    if (ctrlBgEnabled && !ctrlBgEnabled.checked) ctrlBgEnabled.checked = true;
+    applyObjectControlsToSelected({ bgColor: ctrlBgColor.value });
+    clearPreset();
+  });
+}
+
+if (ctrlBgEnabled) {
+  ctrlBgEnabled.addEventListener('change', () => {
+    if (ctrlBgColor) ctrlBgColor.disabled = !ctrlBgEnabled.checked;
+    applyObjectControlsToSelected({
+      bgColor: ctrlBgEnabled.checked ? ctrlBgColor?.value || '#ffffff' : null,
+    });
+    clearPreset();
+  });
+}
 
 // ─── Image filter controls ─────────────────────────────────────────────────────
 
@@ -2212,7 +2273,7 @@ function markPreviewSourceDirty() {
 }
 
 function makePreviewSourceCacheKey(w, h) {
-  const selectedId = state.selectedField ? state.selectedField.id : -1;
+  const selectedId = state.selectedObject ? state.selectedObject.id : -1;
   return `${w}x${h}|onTop:${state.filter.applyOnTop ? 1 : 0}|sel:${selectedId}`;
 }
 
@@ -2243,13 +2304,14 @@ function isPixelPreviewFilter(name) {
 
 function syncTextFieldLayering() {
   const onTopPixelFilter = state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
-  for (const tf of state.textFields) {
-    tf.el.style.zIndex = (onTopPixelFilter && state.selectedField === tf) ? '40' : 'auto';
+  for (const tf of state.objects) {
+    if (tf.type !== 'text') continue;
+    tf.el.style.zIndex = (onTopPixelFilter && state.selectedObject === tf) ? '40' : 'auto';
   }
 }
 
 function isTextFilterBypassed(tf) {
-  return state.filter.applyOnTop && state.selectedField === tf;
+  return state.filter.applyOnTop && state.selectedObject === tf;
 }
 
 function drawPreviewTextLayers(ctx, w, h) {
@@ -2262,8 +2324,13 @@ function drawPreviewTextLayers(ctx, w, h) {
   const imgRect = baseImage.getBoundingClientRect();
   const imgOffsetX = imgRect.left - containerRect.left;
   const imgOffsetY = imgRect.top  - containerRect.top;
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = w;
+  tempCanvas.height = h;
+  const tc = tempCanvas.getContext('2d', { willReadFrequently: true });
 
-  for (const tf of state.textFields) {
+  for (const tf of state.objects) {
+    if (tf.type !== 'text') continue;
     if (isTextFilterBypassed(tf)) continue;
     const s = tf.style;
     const cx = (tf.xPct * canvasContainer.offsetWidth  - imgOffsetX) * sx;
@@ -2279,24 +2346,31 @@ function drawPreviewTextLayers(ctx, w, h) {
                cx;
 
     const resolvedFontFamily = resolveFontFamilyStack(s.font);
-    ctx.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${resolvedFontFamily}`;
-    ctx.textAlign = s.align;
-    ctx.textBaseline = 'middle';
-    const previewBlur = getPreviewTextBlurPx(s.blur, previewScale);
-    ctx.filter = previewBlur > 0 ? `blur(${previewBlur.toFixed(3)}px)` : 'none';
+    tc.clearRect(0, 0, w, h);
+    tc.font = `${s.italic ? 'italic ' : ''}${s.weight} ${fontSize}px ${resolvedFontFamily}`;
+    tc.textAlign = s.align;
+    tc.textBaseline = 'middle';
+    const previewBlur = getObjectBlurRadiusPx(s.blur, previewScale);
+    if (s.bgColor) {
+      const bgW = tf.innerEl.offsetWidth * sx;
+      const bgH = tf.innerEl.offsetHeight * sy;
+      tc.fillStyle = s.bgColor;
+      tc.fillRect(cx - bgW / 2, cy - bgH / 2, bgW, bgH);
+    }
 
     lines.forEach((line, i) => {
       const ly = startY + i * lineHeight;
       if (s.outlineWidth > 0) {
-        ctx.lineWidth = s.outlineWidth;
-        ctx.strokeStyle = s.outlineColor;
-        ctx.lineJoin = 'round';
-        ctx.strokeText(line, lx, ly);
+        tc.lineWidth = s.outlineWidth;
+        tc.strokeStyle = s.outlineColor;
+        tc.lineJoin = 'round';
+        tc.strokeText(line, lx, ly);
       }
-      ctx.fillStyle = s.fgColor;
-      ctx.fillText(line, lx, ly);
+      tc.fillStyle = s.fgColor;
+      tc.fillText(line, lx, ly);
     });
-    ctx.filter = 'none';
+    if (previewBlur > 0) softBlur(tc, w, h, previewBlur);
+    ctx.drawImage(tempCanvas, 0, 0);
   }
 }
 
@@ -2718,7 +2792,8 @@ async function applyImageFilter(renderSeq, quality = 'settle') {
 
   // Unified preview pipeline: never CSS-filter text fields directly.
   const textFilter = '';
-  for (const tf of state.textFields) {
+  for (const tf of state.objects) {
+    if (tf.type !== 'text') continue;
     tf.el.style.filter = isTextFilterBypassed(tf) ? '' : textFilter;
   }
   syncTextFieldLayering();
@@ -2976,15 +3051,16 @@ presetBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     const preset = PRESETS[btn.dataset.preset];
     if (!preset) return;
-    // Preserve the current font size — only swap style attributes
-    const { size: _ignored, ...presetWithoutSize } = preset;
+    // Preserve object-level styling and font size — presets only target text traits.
+    const { size: _ignored, blur: _ignoredBlur, bgColor: _ignoredBg, ...presetWithoutSize } = preset;
     applyControlsToSelected(presetWithoutSize);
     state.lastPreset = btn.dataset.preset;
-    if (state.selectedField) {
-      state.selectedField.activePreset = btn.dataset.preset;
-      loadFieldStyle(state.selectedField);
+    if (state.selectedObject) {
+      state.selectedObject.activePreset = btn.dataset.preset;
+      loadFieldStyle(state.selectedObject);
     } else {
-      syncControlsToStyle(state.lastStyle, btn.dataset.preset);
+      syncObjectControlsToStyle(state.lastStyle);
+      syncTextControlsToStyle(state.lastStyle, btn.dataset.preset);
     }
   });
 });
@@ -3072,7 +3148,8 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
   tempCanvas.height = nh;
   const tc = tempCanvas.getContext('2d', { willReadFrequently: true });
 
-  for (const tf of state.textFields) {
+  for (const tf of state.objects) {
+    if (tf.type !== 'text') continue;
     const s = tf.style;
 
     // Compute center position in natural image coords
@@ -3104,6 +3181,12 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
     tc.font         = ctx.font;
     tc.textAlign    = s.align;
     tc.textBaseline = 'middle';
+    if (s.bgColor) {
+      const bgW = tf.innerEl.offsetWidth * scale;
+      const bgH = tf.innerEl.offsetHeight * scale;
+      tc.fillStyle = s.bgColor;
+      tc.fillRect(cx - bgW / 2, cy - bgH / 2, bgW, bgH);
+    }
 
     lines.forEach((line, i) => {
       const ly = startY + i * lineHeight;
@@ -3120,7 +3203,7 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
     });
 
     if (s.blur > 0) {
-      softBlur(tc, nw, nh, s.blur * scale);
+      softBlur(tc, nw, nh, getObjectBlurRadiusPx(s.blur, scale));
     }
     ctx.drawImage(tempCanvas, 0, 0);
   }
@@ -3588,7 +3671,7 @@ window.addEventListener('keydown', (e) => {
     closeRenderedPreviewOverlay();
     return;
   }
-  if (state.selectedField) {
+  if (state.selectedObject) {
     e.preventDefault();
     deselectAll();
   }
@@ -3600,7 +3683,7 @@ window.addEventListener('resize', () => {
   if (_resizeRaf) return;
   _resizeRaf = requestAnimationFrame(() => {
     _resizeRaf = 0;
-    state.textFields.forEach(tf => tf.reposition());
+    state.objects.forEach(tf => tf.reposition());
     if (state.imageLoaded) {
       fitImageToWrapper();
       markPreviewSourceDirty();
@@ -3612,7 +3695,7 @@ window.addEventListener('resize', () => {
 // ─── Prevent accidental back/navigation ──────────────────────────────────────
 
 window.addEventListener('beforeunload', (e) => {
-  if (state.imageLoaded && state.textFields.length > 0) {
+  if (state.imageLoaded && state.objects.length > 0) {
     e.preventDefault();
     e.returnValue = '';
   }

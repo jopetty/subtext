@@ -697,6 +697,35 @@ html, body {
   justify-content: space-evenly;
 }
 
+#object-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+}
+
+.object-bg-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.object-bg-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#ctrl-bg-color:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ── Mobile section tabs ── */
 
 #panel-tabs {
@@ -1430,8 +1459,21 @@ input[type="range"]::-moz-range-thumb {
     padding-top: 0.4rem;
   }
 
-  /* Keep typography controls in layout so panel height stays intrinsic.
-     Vibe controls are overlaid into the same row when active. */
+  #object-controls {
+    grid-column: 1;
+    grid-row: 2;
+    flex: none;
+    min-height: 0;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    gap: 0.55rem;
+    padding-top: 0;
+  }
+
+  /* Keep sections in layout so panel height stays intrinsic. Active panel is
+     switched by data-panel, without JS height measurements. */
   #filter-section {
     grid-column: 1;
     grid-row: 2;
@@ -1447,7 +1489,21 @@ input[type="range"]::-moz-range-thumb {
     padding-top: 0;
   }
 
+  #bottom-panel[data-panel="object"] #font-controls,
   #bottom-panel[data-panel="vibe"] #font-controls {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  #bottom-panel[data-panel="object"] #object-controls {
+    height: 100%;
+    overflow-y: auto;
+    opacity: 1;
+    pointer-events: auto;
+    padding-top: 0.4rem;
+  }
+
+  #bottom-panel[data-panel="vibe"] #object-controls {
     visibility: hidden;
     pointer-events: none;
   }
@@ -1597,6 +1653,7 @@ input[type="range"]::-moz-range-thumb {
   }
 
   #font-controls,
+  #object-controls,
   #filter-section {
     height: auto;
     flex: none;         /* reset the mobile flex: 1 */
