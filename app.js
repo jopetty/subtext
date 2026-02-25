@@ -937,7 +937,9 @@ if (baseImage) {
 
 const HEIC_MIME_RE = /^image\/hei(c|f|x|s)$/i;
 const HEIC_EXT_RE  = /\.(hei(c|f|x|s))$/i;
-const IMAGE_EXT_RE = /\.(avif|bmp|gif|heic|heif|heix|heis|jpg|jpeg|jpe|jfif|png|tif|tiff|webp)$/i;
+const SVG_MIME_RE  = /^image\/svg\+xml$/i;
+const SVG_EXT_RE   = /\.svg$/i;
+const IMAGE_EXT_RE = /\.(avif|bmp|gif|heic|heif|heix|heis|jpg|jpeg|jpe|jfif|png|svg|tif|tiff|webp)$/i;
 
 function isHeicLikeFile(file) {
   const name = file?.name || '';
@@ -950,6 +952,13 @@ function isLikelyImageFile(file) {
   const type = (file.type || '').toLowerCase();
   const name = file.name || '';
   return type.startsWith('image/') || IMAGE_EXT_RE.test(name);
+}
+
+function isSvgLikeFile(file) {
+  if (!file) return false;
+  const type = (file.type || '').toLowerCase();
+  const name = file.name || '';
+  return SVG_MIME_RE.test(type) || SVG_EXT_RE.test(name);
 }
 
 function extractFirstImageFile(transfer) {
@@ -1124,6 +1133,8 @@ function loadImageFile(file, opts = {}) {
   })();
 }
 
+const DROPPED_IMAGE_OBJECT_SIZE_PCT = 10;
+
 // Theme-color mirrors --bg so the browser chrome matches the app's
 // safe-area zones, which are now all painted with the same --bg color.
 const THEME = {
@@ -1204,7 +1215,7 @@ function showEditor() {
   editorDragEnterCount = 0;
   setThemeColors('editor');
   // Clear any leftover fields
-  state.objects.forEach(tf => tf.el.remove());
+  state.objects.forEach(obj => obj.destroy?.());
   state.objects = [];
   state.selectedObject = null;
   state.lastStyle = null;
@@ -1243,6 +1254,8 @@ function showUpload() {
   baseImage.style.width  = '';
   baseImage.style.height = '';
   deselectAll();
+  state.objects.forEach(obj => obj.destroy?.());
+  state.objects = [];
   // Reset filter
   state.filter = { name: 'none', intensity: 75, params: {}, applyOnTop: false };
   canvasContainer.style.filter = '';
@@ -1326,7 +1339,7 @@ uploadScreen.addEventListener('drop', (e) => {
   loadImageFile(file);
 });
 
-// Drag-and-drop onto the editor to replace current image and reset session.
+// Drag-and-drop onto the editor to add image objects.
 let editorDragEnterCount = 0;
 
 editorScreen.addEventListener('dragenter', (e) => {
@@ -1354,7 +1367,10 @@ editorScreen.addEventListener('drop', (e) => {
   editorScreen.classList.remove('drag-over');
   if (state.uploadBusy || !state.imageLoaded) return;
   const file = extractFirstImageFile(e.dataTransfer);
-  loadImageFile(file, { resetSession: true });
+  const rect = canvasContainer.getBoundingClientRect();
+  const xPct = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+  const yPct = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, rect.height)));
+  addImageObjectFromFile(file, { xPct, yPct });
 });
 
 // Paste from clipboard
@@ -1589,6 +1605,171 @@ class TextObject {
     this.el.classList.remove('selected');
     this.innerEl.blur();
   }
+
+  destroy() {
+    this.el?.remove();
+  }
+}
+
+class ImageObject {
+  constructor(xPct, yPct, opts = {}) {
+    this.id = _fieldId++;
+    this.type = 'image';
+    this.xPct = xPct;
+    this.yPct = yPct;
+    this.aspect = opts.aspect || 1;
+    this.objectUrl = opts.objectUrl || null;
+    this.style = { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0, ...opts.style };
+    this.el = null;
+    this.imgEl = null;
+    this.delEl = null;
+    this.rotateEl = null;
+    this.resizeEl = null;
+    this._build();
+  }
+
+  _build() {
+    const wrap = document.createElement('div');
+    wrap.className = 'text-field image-object';
+    wrap.dataset.id = this.id;
+
+    const del = document.createElement('div');
+    del.className = 'text-field-delete';
+    del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>';
+    del.title = 'Delete';
+
+    const rotate = document.createElement('button');
+    rotate.type = 'button';
+    rotate.className = 'text-field-rotate';
+    rotate.title = 'Rotate';
+    rotate.setAttribute('aria-label', 'Rotate object');
+    rotate.innerHTML = '<img src="icons/switch_access_shortcut_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg?v=3" alt="" aria-hidden="true" />';
+
+    const resize = document.createElement('button');
+    resize.type = 'button';
+    resize.className = 'text-field-resize';
+    resize.title = 'Resize';
+    resize.setAttribute('aria-label', 'Resize object');
+    resize.innerHTML = '<img src="icons/open_in_full_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="" aria-hidden="true" />';
+
+    const img = document.createElement('img');
+    img.className = 'image-object-inner';
+    img.draggable = false;
+    img.alt = '';
+    img.src = this.objectUrl;
+
+    wrap.appendChild(del);
+    wrap.appendChild(rotate);
+    wrap.appendChild(resize);
+    wrap.appendChild(img);
+    canvasContainer.appendChild(wrap);
+
+    this.el = wrap;
+    this.imgEl = img;
+    this.delEl = del;
+    this.rotateEl = rotate;
+    this.resizeEl = resize;
+
+    this._applyStyle();
+    this._positionEl();
+    this._attachEvents();
+  }
+
+  _applyStyle() {
+    const widthPx = Math.max(8, Math.round((this.style.size / 100) * canvasContainer.offsetWidth));
+    const heightPx = Math.max(8, Math.round(widthPx / Math.max(0.01, this.aspect)));
+    this.imgEl.style.width = `${widthPx}px`;
+    this.imgEl.style.height = `${heightPx}px`;
+    this.el.style.backgroundColor = this.style.bgColor || 'transparent';
+    const previewScale = (baseImage.offsetWidth > 0)
+      ? (state.imageNaturalW / baseImage.offsetWidth)
+      : 1;
+    const previewBlur = getPreviewTextBlurPx(this.style.blur, previewScale, { forDom: true });
+    this.imgEl.style.filter = previewBlur > 0 ? `blur(${previewBlur.toFixed(3)}px)` : '';
+  }
+
+  _positionEl() {
+    const cw = canvasContainer.offsetWidth;
+    const ch = canvasContainer.offsetHeight;
+    const x = this.xPct * cw;
+    const y = this.yPct * ch;
+    this.el.style.left = `${x}px`;
+    this.el.style.top = `${y}px`;
+    const deg = this.style.rotateDeg || 0;
+    this.el.style.setProperty('--object-rotate-deg', `${deg}deg`);
+    this.el.style.transform = Math.abs(deg) < 0.01
+      ? 'translate(-50%, -50%)'
+      : `translate(-50%, -50%) rotate(${deg}deg)`;
+  }
+
+  _attachEvents() {
+    this.el.addEventListener('pointerdown', (e) => {
+      if (
+        e.button !== 0 ||
+        e.target === this.delEl ||
+        e.target === this.rotateEl || this.rotateEl.contains(e.target) ||
+        e.target === this.resizeEl || this.resizeEl.contains(e.target)
+      ) return;
+      e.stopPropagation();
+      e.preventDefault();
+      selectField(this);
+      startDrag(e, this);
+    });
+
+    this.rotateEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      selectField(this);
+      startRotate(e, this);
+      clearPreset();
+    });
+
+    this.resizeEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      selectField(this);
+      startResize(e, this);
+      clearPreset();
+    });
+
+    this.delEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.delEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteField(this);
+    });
+  }
+
+  updateStyle(patch) {
+    Object.assign(this.style, patch);
+    this.style.size = Math.max(1, Math.min(100, this.style.size || DROPPED_IMAGE_OBJECT_SIZE_PCT));
+    this._applyStyle();
+    this._positionEl();
+    markPreviewSourceDirty();
+  }
+
+  reposition() {
+    this._applyStyle();
+    this._positionEl();
+    markPreviewSourceDirty();
+  }
+
+  select() {
+    this.el.classList.add('selected');
+  }
+
+  deselect() {
+    this.el.classList.remove('selected');
+  }
+
+  destroy() {
+    this.el?.remove();
+    if (this.objectUrl) {
+      URL.revokeObjectURL(this.objectUrl);
+      this.objectUrl = null;
+    }
+  }
 }
 
 // ─── Field management ─────────────────────────────────────────────────────────
@@ -1613,8 +1794,59 @@ function addTextObject(xPct, yPct) {
 // Backward-compatible alias while text remains the only object type.
 const addTextField = addTextObject;
 
+function addImageObjectFromBlob(blob, xPct = 0.5, yPct = 0.5) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const probe = new Image();
+    probe.onload = () => {
+      const naturalW = probe.naturalWidth || 1;
+      const naturalH = probe.naturalHeight || 1;
+      const aspect = naturalW / Math.max(1, naturalH);
+      const imageObj = new ImageObject(xPct, yPct, {
+        objectUrl,
+        aspect,
+        style: { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0 },
+      });
+      state.objects.push(imageObj);
+      selectField(imageObj);
+      markPreviewSourceDirty();
+      scheduleImageFilterRender({ settle: true });
+      resolve(imageObj);
+    };
+    probe.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Could not open this image. Please try a different file.'));
+    };
+    probe.src = objectUrl;
+  });
+}
+
+function addImageObjectFromFile(file, opts = {}) {
+  const { xPct = 0.5, yPct = 0.5 } = opts;
+  if (!file) return;
+  if (state.uploadBusy || !state.imageLoaded) return;
+  if (!isLikelyImageFile(file)) {
+    alert('Please choose an image file.');
+    return;
+  }
+  setUploadBusy(true, 'Loading image...');
+  (async () => {
+    try {
+      // Keep SVG objects as SVG sources so they render as vectors in-editor.
+      const objectBlob = isSvgLikeFile(file)
+        ? file
+        : await normalizeUploadImage(file);
+      await addImageObjectFromBlob(objectBlob, xPct, yPct);
+    } catch (err) {
+      alert(err?.message || 'Could not open this image. Please try another format.');
+    } finally {
+      setUploadBusy(false);
+    }
+  })();
+}
+
 function deleteField(tf) {
-  tf.el.remove();
+  tf.destroy?.();
   state.objects = state.objects.filter(f => f !== tf);
   if (state.selectedObject === tf) {
     state.selectedObject = null;
@@ -1630,8 +1862,10 @@ function selectField(tf) {
   }
   if (state.selectedObject) {
     state.selectedObject.deselect();
-    state.lastStyle  = { ...state.selectedObject.style };
-    state.lastPreset = state.selectedObject.activePreset ?? null;
+    if (state.selectedObject.type === 'text') {
+      state.lastStyle  = { ...state.selectedObject.style };
+      state.lastPreset = state.selectedObject.activePreset ?? null;
+    }
   }
   state.selectedObject = tf;
   tf.select();
@@ -1644,8 +1878,10 @@ function selectField(tf) {
 
 function deselectAll() {
   if (state.selectedObject) {
-    state.lastStyle  = { ...state.selectedObject.style };
-    state.lastPreset = state.selectedObject.activePreset ?? null;
+    if (state.selectedObject.type === 'text') {
+      state.lastStyle  = { ...state.selectedObject.style };
+      state.lastPreset = state.selectedObject.activePreset ?? null;
+    }
     state.selectedObject.deselect();
     state.selectedObject = null;
   }
@@ -1887,9 +2123,9 @@ function startDrag(e, tf, opts = {}) {
     snapY = null;
     tf.el.classList.remove('dragging');
     if (dragging) {
-      tf.innerEl.blur();
+      tf.innerEl?.blur?.();
     } else if (focusOnClick) {
-      tf.innerEl.focus();
+      tf.innerEl?.focus?.();
     }
   }
 
@@ -1948,8 +2184,8 @@ function startResize(e, tf) {
   const centerY = rect.top + tf.yPct * canvasContainer.offsetHeight;
   const startDist = Math.max(1, Math.hypot(e.clientX - centerX, e.clientY - centerY));
   const origSize = tf.style.size || 5;
-  const minSize = parseFloat(ctrlSize?.min || '1');
-  const maxSize = parseFloat(ctrlSize?.max || '25');
+  const minSize = tf.type === 'text' ? parseFloat(ctrlSize?.min || '1') : 1;
+  const maxSize = tf.type === 'text' ? parseFloat(ctrlSize?.max || '25') : 100;
   tf.el.classList.add('resizing');
 
   function onMove(ev) {
@@ -1958,8 +2194,10 @@ function startResize(e, tf) {
     const rawSize = origSize * (dist / startDist);
     const size = Math.max(minSize, Math.min(maxSize, rawSize));
     tf.updateStyle({ size });
-    if (ctrlSize) ctrlSize.value = String(size);
-    if (ctrlSizeVal) ctrlSizeVal.textContent = `${size}%`;
+    if (tf.type === 'text') {
+      if (ctrlSize) ctrlSize.value = String(size);
+      if (ctrlSizeVal) ctrlSizeVal.textContent = `${size}%`;
+    }
   }
 
   function onUp() {
@@ -1981,8 +2219,28 @@ function getSelectedTextObject() {
   return obj && obj.type === 'text' ? obj : null;
 }
 
+function setTextControlsDisabled(disabled) {
+  const textControlElements = [
+    ctrlFont,
+    ctrlLineHeight,
+    ctrlBold,
+    ctrlItalic,
+    ctrlFgColor,
+    ctrlOutlineColor,
+    ctrlOutlineWidth,
+    ...alignBtns,
+    ...presetBtns,
+  ];
+  textControlElements.forEach((el) => {
+    if (!el) return;
+    el.disabled = disabled;
+  });
+}
+
 function updatePanel() {
   const selectedText = getSelectedTextObject();
+  const nonTextSelected = !!state.selectedObject && !selectedText;
+  setTextControlsDisabled(nonTextSelected);
   if (ctrlAutoContrast) {
     ctrlAutoContrast.disabled = !selectedText;
     ctrlAutoContrast.title = selectedText
@@ -2018,8 +2276,14 @@ function syncTextControlsToStyle(s, activePreset) {
 }
 
 function loadFieldStyle(tf) {
-  syncObjectControlsToStyle(tf.style);
-  syncTextControlsToStyle(tf.style, tf.activePreset);
+  syncObjectControlsToStyle(tf.style || {});
+  if (ctrlSize && typeof tf?.style?.size === 'number') {
+    ctrlSize.value = String(tf.style.size);
+    if (ctrlSizeVal) ctrlSizeVal.textContent = `${tf.style.size}%`;
+  }
+  if (tf.type === 'text') {
+    syncTextControlsToStyle(tf.style, tf.activePreset);
+  }
 }
 
 function applyObjectControlsToSelected(patch) {
@@ -2029,7 +2293,9 @@ function applyObjectControlsToSelected(patch) {
     return;
   }
   state.selectedObject.updateStyle(patch);
-  state.lastStyle = { ...state.selectedObject.style };
+  if (state.selectedObject.type === 'text') {
+    state.lastStyle = { ...state.selectedObject.style };
+  }
 }
 
 function applyControlsToSelected(patch) {
@@ -2374,7 +2640,11 @@ ctrlFont.addEventListener('change', () => {
 ctrlSize.addEventListener('input', () => {
   const v = parseFloat(ctrlSize.value);
   ctrlSizeVal.textContent = v + '%';
-  applyControlsToSelected({ size: v });
+  if (state.selectedObject?.type === 'image') {
+    applyObjectControlsToSelected({ size: v });
+  } else {
+    applyControlsToSelected({ size: v });
+  }
   clearPreset();
 });
 
@@ -2510,17 +2780,16 @@ function isPixelPreviewFilter(name) {
 
 function syncTextFieldLayering() {
   const onTopPixelFilter = state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
-  for (const tf of state.objects) {
-    if (tf.type !== 'text') continue;
-    tf.el.style.zIndex = (onTopPixelFilter && state.selectedObject === tf) ? '40' : 'auto';
+  for (const obj of state.objects) {
+    obj.el.style.zIndex = (onTopPixelFilter && state.selectedObject === obj) ? '40' : 'auto';
   }
 }
 
-function isTextFilterBypassed(tf) {
+function isObjectFilterBypassed(tf) {
   return state.filter.applyOnTop && state.selectedObject === tf;
 }
 
-function drawPreviewTextLayers(ctx, w, h) {
+function drawPreviewObjectLayers(ctx, w, h) {
   const renderedW = baseImage.offsetWidth || 1;
   const renderedH = baseImage.offsetHeight || 1;
   const previewScale = state.imageNaturalW > 0 ? (state.imageNaturalW / w) : 1;
@@ -2535,9 +2804,36 @@ function drawPreviewTextLayers(ctx, w, h) {
   tempCanvas.height = h;
   const tc = tempCanvas.getContext('2d', { willReadFrequently: true });
 
-  for (const tf of state.objects) {
+  const orderedObjects = [
+    ...state.objects.filter(o => o.type === 'image'),
+    ...state.objects.filter(o => o.type === 'text'),
+  ];
+  for (const tf of orderedObjects) {
+    if (tf.type === 'image') {
+      if (isObjectFilterBypassed(tf)) continue;
+      const s = tf.style;
+      const cx = (tf.xPct * canvasContainer.offsetWidth  - imgOffsetX) * sx;
+      const cy = (tf.yPct * canvasContainer.offsetHeight - imgOffsetY) * sy;
+      const objW = (s.size / 100) * w;
+      const objH = objW / Math.max(0.01, tf.aspect || 1);
+      const previewBlur = getObjectBlurRadiusPx(s.blur, previewScale);
+      const rotDeg = s.rotateDeg || 0;
+      tc.clearRect(0, 0, w, h);
+      tc.save();
+      tc.translate(cx, cy);
+      if (Math.abs(rotDeg) >= 0.01) tc.rotate(rotDeg * Math.PI / 180);
+      if (s.bgColor) {
+        tc.fillStyle = s.bgColor;
+        tc.fillRect(-objW / 2, -objH / 2, objW, objH);
+      }
+      tc.drawImage(tf.imgEl, -objW / 2, -objH / 2, objW, objH);
+      tc.restore();
+      if (previewBlur > 0) softBlur(tc, w, h, previewBlur);
+      ctx.drawImage(tempCanvas, 0, 0);
+      continue;
+    }
     if (tf.type !== 'text') continue;
-    if (isTextFilterBypassed(tf)) continue;
+    if (isObjectFilterBypassed(tf)) continue;
     const s = tf.style;
     const cx = (tf.xPct * canvasContainer.offsetWidth  - imgOffsetX) * sx;
     const cy = (tf.yPct * canvasContainer.offsetHeight - imgOffsetY) * sy;
@@ -2723,7 +3019,7 @@ function updateChromaOverlay() {
   vaporSrcCtx.clearRect(0, 0, w, h);
   vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
   if (state.filter.applyOnTop) {
-    drawPreviewTextLayers(vaporSrcCtx, w, h);
+    drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
   const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
   FILTERS.vaporwave.apply(
@@ -2770,7 +3066,7 @@ function updateSolarpunkOverlay() {
   vaporSrcCtx.clearRect(0, 0, w, h);
   vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
   if (state.filter.applyOnTop) {
-    drawPreviewTextLayers(vaporSrcCtx, w, h);
+    drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
   const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
   FILTERS.solarpunk.apply(
@@ -2814,7 +3110,7 @@ function updateHegsethOverlay() {
   vaporSrcCtx.clearRect(0, 0, w, h);
   vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
   if (state.filter.applyOnTop) {
-    drawPreviewTextLayers(vaporSrcCtx, w, h);
+    drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
   const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
   FILTERS.hegseth.apply(
@@ -2858,7 +3154,7 @@ function updateMexicoOverlay() {
   vaporSrcCtx.clearRect(0, 0, w, h);
   vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
   if (state.filter.applyOnTop) {
-    drawPreviewTextLayers(vaporSrcCtx, w, h);
+    drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
   const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
   FILTERS.mexico.apply(
@@ -2959,7 +3255,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
     vaporSrcCtx.clearRect(0, 0, w, h);
     vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
     if (state.filter.applyOnTop) {
-      drawPreviewTextLayers(vaporSrcCtx, w, h);
+      drawPreviewObjectLayers(vaporSrcCtx, w, h);
     }
     previewData = vaporSrcCtx.getImageData(0, 0, w, h);
     sourceBuildMs = performance.now() - sourceBuildStart;
@@ -3031,7 +3327,7 @@ async function applyImageFilter(renderSeq, quality = 'settle') {
   const textFilter = '';
   for (const tf of state.objects) {
     if (tf.type !== 'text') continue;
-    tf.el.style.filter = isTextFilterBypassed(tf) ? '' : textFilter;
+    tf.el.style.filter = isObjectFilterBypassed(tf) ? '' : textFilter;
   }
   syncTextFieldLayering();
   hideLegacyFilterOverlays();
@@ -3379,7 +3675,7 @@ async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   return result;
 }
 
-function drawTextLayersForExport(ctx, nw, nh, scale) {
+function drawObjectLayersForExport(ctx, nw, nh, scale) {
   const containerRect = canvasContainer.getBoundingClientRect();
   const imgRect = baseImage.getBoundingClientRect();
   const imgOffsetX = imgRect.left - containerRect.left;
@@ -3391,7 +3687,36 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
   tempCanvas.height = nh;
   const tc = tempCanvas.getContext('2d', { willReadFrequently: true });
 
-  for (const tf of state.objects) {
+  const orderedObjects = [
+    ...state.objects.filter(o => o.type === 'image'),
+    ...state.objects.filter(o => o.type === 'text'),
+  ];
+  for (const tf of orderedObjects) {
+    if (tf.type === 'image') {
+      const s = tf.style;
+      const cxRendered = tf.xPct * canvasContainer.offsetWidth  - imgOffsetX;
+      const cyRendered = tf.yPct * canvasContainer.offsetHeight - imgOffsetY;
+      const cx = cxRendered * scale;
+      const cy = cyRendered * scale;
+      const objW = (s.size / 100) * nw;
+      const objH = objW / Math.max(0.01, tf.aspect || 1);
+      const rotDeg = s.rotateDeg || 0;
+      tc.clearRect(0, 0, nw, nh);
+      tc.save();
+      tc.translate(cx, cy);
+      if (Math.abs(rotDeg) >= 0.01) tc.rotate(rotDeg * Math.PI / 180);
+      if (s.bgColor) {
+        tc.fillStyle = s.bgColor;
+        tc.fillRect(-objW / 2, -objH / 2, objW, objH);
+      }
+      tc.drawImage(tf.imgEl, -objW / 2, -objH / 2, objW, objH);
+      tc.restore();
+      if (s.blur > 0) {
+        softBlur(tc, nw, nh, getObjectBlurRadiusPx(s.blur, scale));
+      }
+      ctx.drawImage(tempCanvas, 0, 0);
+      continue;
+    }
     if (tf.type !== 'text') continue;
     const s = tf.style;
 
@@ -3523,7 +3848,7 @@ async function renderCurrentImageBlob(options = {}) {
   }
 
   const textStartTs = performance.now();
-  drawTextLayersForExport(ctx, nw, nh, scale);
+  drawObjectLayersForExport(ctx, nw, nh, scale);
   textMs += performance.now() - textStartTs;
 
   if (state.filter.applyOnTop) {
@@ -3816,6 +4141,8 @@ let _saveKeyTapCount = 0;
 let _saveKeyTimer = 0;
 let _copyKeyTapCount = 0;
 let _copyKeyTimer = 0;
+let _backKeyTapCount = 0;
+let _backKeyTimer = 0;
 let _devKeyTapCount = 0;
 let _devKeyTimer = 0;
 const ACTION_KEY_DBL_TAP_MS = 800;
@@ -3890,15 +4217,17 @@ window.addEventListener('keydown', async (e) => {
   if (!editorScreen.classList.contains('active')) return;
   if (!state.imageLoaded) return;
   const k = e.key.toLowerCase();
-  if (k !== 's' && k !== 'c') return;
+  if (k !== 's' && k !== 'c' && k !== 'n') return;
   if (k === 'c' && !state.copyActionAvailable) return;
 
   const active = document.activeElement;
   if (active?.isContentEditable) {
     _saveKeyTapCount = 0;
     _copyKeyTapCount = 0;
+    _backKeyTapCount = 0;
     if (_saveKeyTimer) { clearTimeout(_saveKeyTimer); _saveKeyTimer = 0; }
     if (_copyKeyTimer) { clearTimeout(_copyKeyTimer); _copyKeyTimer = 0; }
+    if (_backKeyTimer) { clearTimeout(_backKeyTimer); _backKeyTimer = 0; }
     return;
   }
 
@@ -3919,6 +4248,26 @@ window.addEventListener('keydown', async (e) => {
     }
     e.preventDefault();
     await handleSaveAction();
+    return;
+  }
+
+  if (k === 'n') {
+    _backKeyTapCount += 1;
+    if (_backKeyTapCount < 2) {
+      if (_backKeyTimer) clearTimeout(_backKeyTimer);
+      _backKeyTimer = setTimeout(() => {
+        _backKeyTapCount = 0;
+        _backKeyTimer = 0;
+      }, ACTION_KEY_DBL_TAP_MS);
+      return;
+    }
+    _backKeyTapCount = 0;
+    if (_backKeyTimer) {
+      clearTimeout(_backKeyTimer);
+      _backKeyTimer = 0;
+    }
+    e.preventDefault();
+    backBtn?.click();
     return;
   }
 

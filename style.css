@@ -367,7 +367,7 @@ html, body {
 }
 
 #editor-screen.drag-over::after {
-  content: 'Drop to replace image and start over';
+  content: 'Drop to add image object';
   position: fixed;
   inset: 14px;
   border: 2px dashed var(--accent);
@@ -509,7 +509,7 @@ html, body {
 
 #canvas-wrapper {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -772,6 +772,16 @@ html, body {
   text-decoration: none;
 }
 
+.image-object-inner {
+  display: block;
+  max-width: none;
+  max-height: none;
+  border-radius: 6px;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 /* text-stroke via CSS paint-order trick, applied via JS inline styles */
 
 /* ===== BOTTOM PANEL ===== */
@@ -783,7 +793,7 @@ html, body {
   background: var(--bg);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
@@ -1531,7 +1541,7 @@ input[type="range"]::-moz-range-thumb {
     padding-top: 0.2rem;
     padding-bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
     overflow-x: visible;
-    overflow-y: hidden;
+    overflow-y: visible;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto;
@@ -1677,27 +1687,37 @@ input[type="range"]::-moz-range-thumb {
 
   .controls-row--filter-chips {
     flex-wrap: nowrap;
+    overflow: visible;
   }
 
   .filter-chips {
-    width: calc(100% + 1.7rem);
-    max-width: none;
-    margin-left: -0.85rem;
-    margin-right: -0.85rem;
-    padding: 0 0.85rem;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+    padding: 0 0 2px;
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    scroll-padding-inline: 0.85rem;
+    scroll-snap-type: x proximity;
   }
 
   .filter-chips::-webkit-scrollbar {
     display: none;
   }
 
+  .filter-chips::before,
+  .filter-chips::after {
+    content: '';
+    flex: 0 0 0.85rem;
+  }
+
   .filter-chip {
     flex: 0 0 auto;
+    scroll-snap-align: start;
   }
 }
 
