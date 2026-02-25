@@ -1771,6 +1771,19 @@ input[type="range"]::-moz-range-thumb {
     display: none;
   }
 
+  .section-heading-row--object {
+    position: relative;
+    justify-content: flex-start;
+    padding-right: 36px;
+  }
+
+  .section-heading-row--object .object-add-btn--desktop {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%);
+  }
+
   .section-divider {
     display: block;
     margin: 0.75rem 0 0;
