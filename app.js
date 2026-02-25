@@ -22,6 +22,185 @@ const state = {
   copyActionAvailable: true,
 };
 
+const PERF_MAX_SAMPLES = 200;
+const perf = {
+  devMode: false,
+  panelEl: null,
+  panelX: null,
+  panelY: null,
+  panelDragging: false,
+  panelDragDx: 0,
+  panelDragDy: 0,
+  previewSamples: [],
+  exportSamples: [],
+  previewFrameTs: [],
+  workerFallbacks: 0,
+  workerErrors: 0,
+  workerTimeouts: 0,
+  stalePreviewDrops: 0,
+  previewQueueDepthMax: 0,
+  previewRenderQueueWaitMs: 0,
+  previewInputTs: 0,
+  previewPendingCount: 0,
+  previewRenderInFlight: 0,
+  previewSourceCacheHits: 0,
+  previewSourceCacheMisses: 0,
+  settleExecMode: 'worker',
+  sampleCounter: 0,
+};
+
+function pushPerfSample(arr, sample) {
+  arr.push(sample);
+  if (arr.length > PERF_MAX_SAMPLES) arr.shift();
+}
+
+function percentile(values, p) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
+  return sorted[idx];
+}
+
+function calcPreviewFps() {
+  const now = performance.now();
+  const cutoff = now - 1000;
+  while (perf.previewFrameTs.length && perf.previewFrameTs[0] < cutoff) {
+    perf.previewFrameTs.shift();
+  }
+  return perf.previewFrameTs.length;
+}
+
+function perfSummary(samples, key) {
+  const vals = samples.map(s => s[key]);
+  return {
+    p50: percentile(vals, 0.5),
+    p95: percentile(vals, 0.95),
+    max: vals.length ? Math.max(...vals) : 0,
+  };
+}
+
+function renderPerfPanel() {
+  if (!perf.devMode || !perf.panelEl) return;
+  const pr = perfSummary(perf.previewSamples, 'totalMs');
+  const pf = perfSummary(perf.previewSamples, 'filterMs');
+  const ps = perfSummary(perf.previewSamples, 'sourceBuildMs');
+  const pq = perfSummary(perf.previewSamples, 'queueWaitMs');
+  const ex = perfSummary(perf.exportSamples, 'totalMs');
+  const ef = perfSummary(perf.exportSamples, 'filterMs');
+  const fps = calcPreviewFps();
+  const sampleCount = perf.previewSamples.length;
+  const cacheHitCount = perf.previewSamples.reduce((n, s) => n + (s.sourceCacheHit ? 1 : 0), 0);
+  const cacheHitPct = sampleCount > 0 ? (cacheHitCount / sampleCount) * 100 : 0;
+  perf.panelEl.textContent =
+    `dev perf\n` +
+    `preview fps: ${fps}\n` +
+    `preview total ms p50/p95/max: ${pr.p50.toFixed(1)} / ${pr.p95.toFixed(1)} / ${pr.max.toFixed(1)}\n` +
+    `preview source-build ms p50/p95/max: ${ps.p50.toFixed(1)} / ${ps.p95.toFixed(1)} / ${ps.max.toFixed(1)}\n` +
+    `preview filter ms p50/p95/max: ${pf.p50.toFixed(1)} / ${pf.p95.toFixed(1)} / ${pf.max.toFixed(1)}\n` +
+    `preview queue ms p50/p95/max: ${pq.p50.toFixed(1)} / ${pq.p95.toFixed(1)} / ${pq.max.toFixed(1)}\n` +
+    `preview source cache hit-rate: ${cacheHitPct.toFixed(1)}% (${perf.previewSourceCacheHits}h/${perf.previewSourceCacheMisses}m)\n` +
+    `settle exec mode: ${perf.settleExecMode}\n` +
+    `preview in-flight/pending/max-pending: ${perf.previewRenderInFlight} / ${perf.previewPendingCount} / ${perf.previewQueueDepthMax}\n` +
+    `preview stale drops: ${perf.stalePreviewDrops}\n` +
+    `worker fallback/errors/timeouts: ${perf.workerFallbacks} / ${perf.workerErrors} / ${perf.workerTimeouts}\n` +
+    `export total ms p50/p95/max: ${ex.p50.toFixed(1)} / ${ex.p95.toFixed(1)} / ${ex.max.toFixed(1)}\n` +
+    `export filter ms p50/p95/max: ${ef.p50.toFixed(1)} / ${ef.p95.toFixed(1)} / ${ef.max.toFixed(1)}\n` +
+    `samples preview/export: ${perf.previewSamples.length} / ${perf.exportSamples.length}`;
+}
+
+function ensurePerfPanel() {
+  if (perf.panelEl) return perf.panelEl;
+  const el = document.createElement('pre');
+  el.id = 'dev-perf-panel';
+  el.style.cssText = [
+    'position:fixed',
+    'top:56px',
+    'left:8px',
+    'z-index:120',
+    'padding:8px 10px',
+    'max-width:min(86vw, 520px)',
+    'max-height:60vh',
+    'overflow:auto',
+    'white-space:pre',
+    'font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace',
+    'background:rgba(15,15,15,0.88)',
+    'color:#e9f0ff',
+    'border:1px solid rgba(145,170,210,0.45)',
+    'border-radius:6px',
+    'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
+    'pointer-events:auto',
+    'user-select:none',
+    'touch-action:none',
+    'cursor:move',
+    'display:none',
+  ].join(';');
+  const clampPanel = () => {
+    if (!perf.panelEl) return;
+    const margin = 6;
+    const maxX = Math.max(margin, window.innerWidth - perf.panelEl.offsetWidth - margin);
+    const maxY = Math.max(margin, window.innerHeight - perf.panelEl.offsetHeight - margin);
+    if (perf.panelX === null || perf.panelY === null) return;
+    perf.panelX = Math.max(margin, Math.min(maxX, perf.panelX));
+    perf.panelY = Math.max(margin, Math.min(maxY, perf.panelY));
+    perf.panelEl.style.left = `${perf.panelX}px`;
+    perf.panelEl.style.top = `${perf.panelY}px`;
+    perf.panelEl.style.right = 'auto';
+  };
+  el.addEventListener('pointerdown', (e) => {
+    perf.panelDragging = true;
+    const rect = el.getBoundingClientRect();
+    perf.panelDragDx = e.clientX - rect.left;
+    perf.panelDragDy = e.clientY - rect.top;
+    perf.panelX = rect.left;
+    perf.panelY = rect.top;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!perf.panelDragging) return;
+    perf.panelX = e.clientX - perf.panelDragDx;
+    perf.panelY = e.clientY - perf.panelDragDy;
+    clampPanel();
+  });
+  const stopDrag = (e) => {
+    if (!perf.panelDragging) return;
+    perf.panelDragging = false;
+    try {
+      el.releasePointerCapture(e.pointerId);
+    } catch {}
+  };
+  el.addEventListener('pointerup', stopDrag);
+  el.addEventListener('pointercancel', stopDrag);
+  window.addEventListener('resize', clampPanel);
+  document.body.appendChild(el);
+  perf.panelEl = el;
+  return el;
+}
+
+function setDevMode(enabled) {
+  perf.devMode = enabled;
+  const panel = ensurePerfPanel();
+  panel.style.display = enabled ? 'block' : 'none';
+  renderPerfPanel();
+}
+
+function recordPreviewPerf(sample) {
+  if (sample.sourceCacheHit) perf.previewSourceCacheHits++;
+  else perf.previewSourceCacheMisses++;
+  pushPerfSample(perf.previewSamples, sample);
+  perf.previewFrameTs.push(performance.now());
+  perf.sampleCounter++;
+  if (perf.sampleCounter % 30 === 0) {
+    console.log('[perf][preview]', sample);
+  }
+  renderPerfPanel();
+}
+
+function recordExportPerf(sample) {
+  pushPerfSample(perf.exportSamples, sample);
+  console.log('[perf][export]', sample);
+  renderPerfPanel();
+}
+
 // Preset styles
 const PRESETS = {
   classic: {
@@ -101,8 +280,21 @@ const TWILIGHT_POLY_COEFS = [
   [0.12329674, 0.62832433, -0.23901433],
 ];
 
+const MEXICO_COEFS = [
+  [-0.07086585, -0.00842946,  0.05177793],
+  [ 2.62209105, -0.02575670, -0.16334338],
+  [-0.03539947,  0.49390715, -0.02859681],
+  [-0.06194337,  0.07698684, -0.37386778],
+  [-1.17756331, -0.50214225,  0.36419725],
+  [-1.18718219,  1.39672267, -0.53655916],
+  [ 0.28874910, -0.36011073,  0.09994905],
+  [ 0.95353884, -0.27611768,  0.52998900],
+  [-0.38004848,  0.38436118, -0.40951315],
+  [ 0.03741731, -0.13591971,  1.07161438],
+];
+
 // Each vibe has:
-//   cssPreview(t)         → CSS filter string for instant live preview (t = 0–1)
+//   cssPreview(t)         → optional CSS approximation (debug/reference only)
 //   apply(data, w, h, t)  → pixel-level function used during canvas export
 const FILTERS = {
   film: {
@@ -176,29 +368,23 @@ const FILTERS = {
     apply(data, w, h, t) {
       const blend = Math.max(0, Math.min(1, t));
       const invBlend = 1 - blend;
-      const rp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
-      const gp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
-      const bp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
+      const C = TWILIGHT_POLY_COEFS;
       for (let i = 0; i < data.length; i += 4) {
         const sr = data[i] / 255;
         const sg = data[i + 1] / 255;
         const sb = data[i + 2] / 255;
-        rp[0] = 1; gp[0] = 1; bp[0] = 1;
-        for (let d = 1; d <= TWILIGHT_POLY_MAX_DEG; d++) {
-          rp[d] = rp[d - 1] * sr;
-          gp[d] = gp[d - 1] * sg;
-          bp[d] = bp[d - 1] * sb;
-        }
-        let tr = 0;
-        let tg = 0;
-        let tb = 0;
-        for (let k = 0; k < TWILIGHT_POLY_EXPS.length; k++) {
-          const ex = TWILIGHT_POLY_EXPS[k];
-          const v = rp[ex[0]] * gp[ex[1]] * bp[ex[2]];
-          tr += v * TWILIGHT_POLY_COEFS[k][0];
-          tg += v * TWILIGHT_POLY_COEFS[k][1];
-          tb += v * TWILIGHT_POLY_COEFS[k][2];
-        }
+        const rr = sr * sr;
+        const gg = sg * sg;
+        const bb = sb * sb;
+        const rg = sr * sg;
+        const rb = sr * sb;
+        const gb = sg * sb;
+        let tr = C[0][0];
+        let tg = C[0][1];
+        let tb = C[0][2];
+        tr += sr * C[1][0] + sg * C[2][0] + sb * C[3][0] + rr * C[4][0] + rg * C[5][0] + rb * C[6][0] + gg * C[7][0] + gb * C[8][0] + bb * C[9][0];
+        tg += sr * C[1][1] + sg * C[2][1] + sb * C[3][1] + rr * C[4][1] + rg * C[5][1] + rb * C[6][1] + gg * C[7][1] + gb * C[8][1] + bb * C[9][1];
+        tb += sr * C[1][2] + sg * C[2][2] + sb * C[3][2] + rr * C[4][2] + rg * C[5][2] + rb * C[6][2] + gg * C[7][2] + gb * C[8][2] + bb * C[9][2];
 
         tr = tr < 0 ? 0 : tr > 1 ? 1 : tr;
         tg = tg < 0 ? 0 : tg > 1 ? 1 : tg;
@@ -215,22 +401,7 @@ const FILTERS = {
     cssPreview: (t) =>
       `sepia(${0.8*t}) saturate(${1 + 0.2*t}) hue-rotate(${-20*t}deg) brightness(${1 - 0.1*t}) contrast(1)`,
     apply(data, w, h, t) {
-      // Polynomial LUT-like transform (low complexity, degree 2) trained via
-      // lut_trainer/create_lut.py from paired Mexico grade examples.
-      // Features: [1, r, g, b, r^2, rg, rb, g^2, gb, b^2]
-      // Output is blended with source by intensity t so the slider remains smooth.
-      const C = [
-        [-0.07086585, -0.00842946,  0.05177793],
-        [ 2.62209105, -0.02575670, -0.16334338],
-        [-0.03539947,  0.49390715, -0.02859681],
-        [-0.06194337,  0.07698684, -0.37386778],
-        [-1.17756331, -0.50214225,  0.36419725],
-        [-1.18718219,  1.39672267, -0.53655916],
-        [ 0.28874910, -0.36011073,  0.09994905],
-        [ 0.95353884, -0.27611768,  0.52998900],
-        [-0.38004848,  0.38436118, -0.40951315],
-        [ 0.03741731, -0.13591971,  1.07161438],
-      ];
+      const C = MEXICO_COEFS;
       const blend = Math.max(0, Math.min(1, t));
       const invBlend = 1 - blend;
 
@@ -245,15 +416,12 @@ const FILTERS = {
         const rb = sr * sb;
         const gb = sg * sb;
 
-        const f = [1, sr, sg, sb, rr, rg, rb, gg, gb, bb];
-        let tr = 0;
-        let tg = 0;
-        let tb = 0;
-        for (let k = 0; k < 10; k++) {
-          tr += f[k] * C[k][0];
-          tg += f[k] * C[k][1];
-          tb += f[k] * C[k][2];
-        }
+        let tr = C[0][0];
+        let tg = C[0][1];
+        let tb = C[0][2];
+        tr += sr * C[1][0] + sg * C[2][0] + sb * C[3][0] + rr * C[4][0] + rg * C[5][0] + rb * C[6][0] + gg * C[7][0] + gb * C[8][0] + bb * C[9][0];
+        tg += sr * C[1][1] + sg * C[2][1] + sb * C[3][1] + rr * C[4][1] + rg * C[5][1] + rb * C[6][1] + gg * C[7][1] + gb * C[8][1] + bb * C[9][1];
+        tb += sr * C[1][2] + sg * C[2][2] + sb * C[3][2] + rr * C[4][2] + rg * C[5][2] + rb * C[6][2] + gg * C[7][2] + gb * C[8][2] + bb * C[9][2];
         tr = tr < 0 ? 0 : tr > 1 ? 1 : tr;
         tg = tg < 0 ? 0 : tg > 1 ? 1 : tg;
         tb = tb < 0 ? 0 : tb > 1 ? 1 : tb;
@@ -273,8 +441,10 @@ const FILTERS = {
     // Full pixel-level path used in export and in-editor preview overlay.
     cssPreview: (t) =>
       `saturate(${1 + 1.1*t}) hue-rotate(${-28*t}deg) contrast(${1 + 0.3*t}) brightness(${1 - 0.1*t})`,
-    apply(data, w, h, t, params, pixelScale = 1) {
-      const orig = new Uint8ClampedArray(data);
+    apply(data, w, h, t, params, pixelScale = 1, scratch) {
+      const localScratch = scratch || getFilterScratch('vaporwave', data.length);
+      const orig = localScratch.orig;
+      orig.set(data);
       const chromaShift = Math.round(30 * (params.chroma ?? 50) / 100 * pixelScale);
       const sat = 1 + 1.1 * t;
       const contrast = 1 + 0.3 * t;
@@ -436,8 +606,32 @@ const FILTERS = {
     label: 'Hegseth',
     cssPreview: (t) =>
       `brightness(${1 - 0.01*t}) contrast(${1 - 0.04*t})`,
-    apply(data, w, h, t, params = {}, pixelScale = 1) {
-      const orig = new Uint8ClampedArray(data);
+    apply(data, w, h, t, params = {}, pixelScale = 1, scratch) {
+      const localScratch = scratch || getFilterScratch('hegseth', data.length);
+      const orig = localScratch.orig;
+      orig.set(data);
+      if (!localScratch.xm1 || localScratch.xm1.length !== w) {
+        localScratch.xm1 = new Int32Array(w);
+        localScratch.xp1 = new Int32Array(w);
+        localScratch.xByte = new Int32Array(w);
+        localScratch.g1x = new Int32Array(w);
+        localScratch.g2x = new Int32Array(w);
+        for (let x = 0; x < w; x++) {
+          localScratch.xm1[x] = x > 0 ? x - 1 : 0;
+          localScratch.xp1[x] = x < w - 1 ? x + 1 : w - 1;
+          localScratch.xByte[x] = x * 4;
+        }
+      }
+      if (!localScratch.sinRow ||
+          localScratch.sinRow.length !== h ||
+          localScratch.lastWobbleScale !== pixelScale) {
+        localScratch.sinRow = new Float32Array(h);
+        const wobbleScaleForCache = Math.max(0.0001, pixelScale);
+        for (let y = 0; y < h; y++) {
+          localScratch.sinRow[y] = Math.sin((y / wobbleScaleForCache) * 0.08);
+        }
+        localScratch.lastWobbleScale = pixelScale;
+      }
       const angleDeg = params.angle ?? 0;
       const ghostDistanceT = (params.ghostDistance ?? 50) / 100;
       const angleRad = angleDeg * Math.PI / 180;
@@ -453,9 +647,15 @@ const FILTERS = {
       const dy1 = Math.round(dirY * shift1);
       const dy2 = Math.round(dirY * shift2);
       const wobbleAmp = 2.3 * t * pixelScale;
+      const xm1 = localScratch.xm1;
+      const xp1 = localScratch.xp1;
+      const xByte = localScratch.xByte;
+      const g1x = localScratch.g1x;
+      const g2x = localScratch.g2x;
+      const sinRow = localScratch.sinRow;
 
       for (let y = 0; y < h; y++) {
-        const wobble = Math.round(Math.sin(y * 0.08) * wobbleAmp);
+        const wobble = Math.round(sinRow[y] * wobbleAmp);
         const yBase = y * w * 4;
         const g1y = y + dy1 < 0 ? 0 : y + dy1 >= h ? h - 1 : y + dy1;
         const g2y = y - dy2 < 0 ? 0 : y - dy2 >= h ? h - 1 : y - dy2;
@@ -463,21 +663,28 @@ const FILTERS = {
         const g2BaseY = g2y * w * 4;
         const dx1 = Math.round(dirX * shift1) + wobble;
         const dx2 = Math.round(dirX * shift2) + Math.round(wobble * 0.5);
+        for (let x = 0; x < w; x++) {
+          const gx1 = x + dx1;
+          g1x[x] = gx1 < 0 ? 0 : gx1 >= w ? w - 1 : gx1;
+          const gx2 = x - dx2;
+          g2x[x] = gx2 < 0 ? 0 : gx2 >= w ? w - 1 : gx2;
+        }
 
         for (let x = 0; x < w; x++) {
-          const xm1 = x > 0 ? x - 1 : 0;
-          const xp1 = x < w - 1 ? x + 1 : w - 1;
-          const g1x = x + dx1 < 0 ? 0 : x + dx1 >= w ? w - 1 : x + dx1;
-          const g1x1 = g1x < w - 1 ? g1x + 1 : w - 1;
-          const g2x = x - dx2 < 0 ? 0 : x - dx2 >= w ? w - 1 : x - dx2;
-          const g2x1 = g2x > 0 ? g2x - 1 : 0;
-          const i = yBase + x * 4;
+          const xB = xByte[x];
+          const i = yBase + xB;
+          const baseM1 = yBase + xByte[xm1[x]];
+          const baseP1 = yBase + xByte[xp1[x]];
+          const g1Base = g1BaseY + xByte[g1x[x]];
+          const g1BaseN = g1BaseY + xByte[g1x[x] < w - 1 ? g1x[x] + 1 : w - 1];
+          const g2Base = g2BaseY + xByte[g2x[x]];
+          const g2BaseN = g2BaseY + xByte[g2x[x] > 0 ? g2x[x] - 1 : 0];
 
           for (let c = 0; c < 3; c++) {
             // In-place smear + two directional ghost copies.
-            const base = (orig[yBase + xm1 * 4 + c] + orig[yBase + x * 4 + c] + orig[yBase + xp1 * 4 + c]) / 3;
-            const g1 = (orig[g1BaseY + g1x * 4 + c] + orig[g1BaseY + g1x1 * 4 + c]) / 2;
-            const g2 = (orig[g2BaseY + g2x * 4 + c] + orig[g2BaseY + g2x1 * 4 + c]) / 2;
+            const base = (orig[baseM1 + c] + orig[i + c] + orig[baseP1 + c]) / 3;
+            const g1 = (orig[g1Base + c] + orig[g1BaseN + c]) / 2;
+            const g2 = (orig[g2Base + c] + orig[g2BaseN + c]) / 2;
             data[i + c] = clamp255((base * mainW + g1 * g1W + g2 * g2W) * invWSum);
           }
         }
@@ -496,6 +703,170 @@ const FILTER_PARAM_DEFAULTS = {
   solarpunk:   { bloom: 35, haze: 25 },
   hegseth:     { angle: 0, ghostDistance: 50 },
 };
+
+const _filterScratch = Object.create(null);
+
+function getFilterScratch(name, size) {
+  const scratch = _filterScratch[name] || (_filterScratch[name] = Object.create(null));
+  if (size && (!scratch.orig || scratch.orig.length !== size)) {
+    scratch.orig = new Uint8ClampedArray(size);
+  }
+  return scratch;
+}
+
+function normalizeFilterApplySource(fn) {
+  return fn.toString().replace(/^\s*apply\s*\(/, 'function(');
+}
+
+function buildFilterWorkerScript() {
+  const filterEntries = Object.entries(FILTERS)
+    .map(([name, def]) => `${JSON.stringify(name)}: ${normalizeFilterApplySource(def.apply)}`)
+    .join(',\n');
+
+  return `
+self.onmessage = null;
+function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+const TWILIGHT_POLY_MAX_DEG = ${TWILIGHT_POLY_MAX_DEG};
+const TWILIGHT_POLY_EXPS = ${JSON.stringify(TWILIGHT_POLY_EXPS)};
+const TWILIGHT_POLY_COEFS = ${JSON.stringify(TWILIGHT_POLY_COEFS)};
+const MEXICO_COEFS = ${JSON.stringify(MEXICO_COEFS)};
+const FILTER_APPLY = {
+${filterEntries}
+};
+const SCRATCH = Object.create(null);
+function getScratch(name, size) {
+  const s = SCRATCH[name] || (SCRATCH[name] = Object.create(null));
+  if (size && (!s.orig || s.orig.length !== size)) {
+    s.orig = new Uint8ClampedArray(size);
+  }
+  return s;
+}
+self.onmessage = (event) => {
+  const payload = event.data || {};
+  const id = payload.id;
+  try {
+    const data = new Uint8ClampedArray(payload.buffer);
+    const name = payload.filterName || 'none';
+    if (name !== 'none') {
+      const fn = FILTER_APPLY[name];
+      if (typeof fn === 'function') {
+        fn(
+          data,
+          payload.w,
+          payload.h,
+          payload.intensity,
+          payload.params || {},
+          payload.pixelScale || 1,
+          getScratch(name, data.length)
+        );
+      }
+    }
+    self.postMessage({ id, buffer: data.buffer }, [data.buffer]);
+  } catch (err) {
+    self.postMessage({ id, error: err?.message || String(err) });
+  }
+};
+`;
+}
+
+let _filterWorker = null;
+let _filterWorkerUrl = null;
+let _filterWorkerReqId = 0;
+const _filterWorkerPending = new Map();
+
+function ensureFilterWorker() {
+  if (_filterWorker) return _filterWorker;
+  if (typeof Worker === 'undefined') return null;
+  try {
+    _filterWorkerUrl = URL.createObjectURL(new Blob([buildFilterWorkerScript()], { type: 'application/javascript' }));
+    const worker = new Worker(_filterWorkerUrl);
+    worker.onmessage = (event) => {
+      const { id, buffer, error } = event.data || {};
+      const pending = _filterWorkerPending.get(id);
+      if (!pending) return;
+      _filterWorkerPending.delete(id);
+      if (error) {
+        pending.reject(new Error(error));
+      } else {
+        pending.resolve(new Uint8ClampedArray(buffer));
+      }
+    };
+    worker.onerror = (event) => {
+      perf.workerErrors++;
+      for (const [, pending] of _filterWorkerPending) {
+        pending.reject(new Error(event?.message || 'Filter worker failed'));
+      }
+      _filterWorkerPending.clear();
+      try {
+        worker.terminate();
+      } catch {}
+      _filterWorker = null;
+    };
+    _filterWorker = worker;
+    return worker;
+  } catch {
+    return null;
+  }
+}
+
+async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelScale = 1, opts = {}) {
+  if (name === 'none') return { data: imgData.data, usedWorker: false, fellBack: false };
+  if (opts.forceMainThread) {
+    const scratch = getFilterScratch(name, imgData.data.length);
+    FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
+    return { data: imgData.data, usedWorker: false, fellBack: false };
+  }
+  const worker = ensureFilterWorker();
+  if (!worker) {
+    const scratch = getFilterScratch(name, imgData.data.length);
+    FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
+    return { data: imgData.data, usedWorker: false, fellBack: false };
+  }
+  // Keep the source ImageData buffer intact; send a copy to the worker.
+  // If worker execution fails, we can safely fall back to main-thread apply.
+  const input = new Uint8ClampedArray(imgData.data);
+  const id = ++_filterWorkerReqId;
+  try {
+    const out = await new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        _filterWorkerPending.delete(id);
+        perf.workerTimeouts++;
+        reject(new Error('Filter worker timed out'));
+      }, 4000);
+      _filterWorkerPending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        },
+      });
+      worker.postMessage({
+        id,
+        filterName: name,
+        w,
+        h,
+        intensity,
+        params: params || {},
+        pixelScale,
+        buffer: input.buffer,
+      }, [input.buffer]);
+    });
+    return { data: out, usedWorker: true, fellBack: false };
+  } catch {
+    // Disable broken/hung worker and continue with deterministic fallback.
+    perf.workerFallbacks++;
+    try {
+      _filterWorker?.terminate();
+    } catch {}
+    _filterWorker = null;
+    const scratch = getFilterScratch(name, imgData.data.length);
+    FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
+    return { data: imgData.data, usedWorker: false, fellBack: true };
+  }
+}
 
 function defaultStyle() {
   return state.lastStyle ? { ...state.lastStyle } : { ...PRESETS.classic, blur: 0 };
@@ -714,6 +1085,7 @@ function loadImageFile(file, opts = {}) {
         state.imageNaturalW = baseImage.naturalWidth;
         state.imageNaturalH = baseImage.naturalHeight;
         state.imageLoaded = true;
+        markPreviewSourceDirty();
         showEditor();
       };
       baseImage.onerror = () => {
@@ -844,6 +1216,7 @@ function showEditor() {
   state.textFields = [];
   state.selectedField = null;
   state.lastStyle = null;
+  markPreviewSourceDirty();
   // Always start on the Typography tab when opening the editor
   switchPanelTab('typography');
   updatePanel();
@@ -852,7 +1225,7 @@ function showEditor() {
     updateMobileTrayHeight();
     fitImageToWrapper();
     // Force fresh preview render so pixel-overlay vibes don't show stale image data.
-    scheduleImageFilterRender();
+    scheduleImageFilterRender({ settle: true });
   });
   // Show the canvas hint and auto-dismiss after 10 s
   showHintMessage('Double-click image to add text', 10000);
@@ -905,6 +1278,23 @@ function showUpload() {
     cancelAnimationFrame(_filterRenderRaf);
     _filterRenderRaf = 0;
   }
+  if (_previewThrottleTimer) {
+    clearTimeout(_previewThrottleTimer);
+    _previewThrottleTimer = 0;
+  }
+  _previewInteractionUntilTs = 0;
+  _previewSettleRequested = false;
+  _previewRenderSeq = 0;
+  _previewRenderedSeq = 0;
+  _previewRenderInFlight = false;
+  _previewRenderPending = false;
+  previewSourceCache.data = null;
+  previewSourceCache.w = 0;
+  previewSourceCache.h = 0;
+  previewSourceCache.key = '';
+  previewSourceCache.dirty = true;
+  perf.previewSourceCacheHits = 0;
+  perf.previewSourceCacheMisses = 0;
   setUploadBusy(false);
 }
 
@@ -1154,6 +1544,10 @@ class TextField {
     // Keep text in sync
     this.innerEl.addEventListener('input', () => {
       this.text = this.innerEl.textContent;
+      markPreviewSourceDirty();
+      if (state.filter.applyOnTop) {
+        scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+      }
     });
 
     // Prevent enter from inserting <div> — use \n instead
@@ -1170,11 +1564,13 @@ class TextField {
     this._applyStyle();
     // Reposition in case font-size changed and element grew
     this._positionEl();
+    markPreviewSourceDirty();
   }
 
   reposition() {
     this._applyStyle(); // pixel size depends on container width; recompute on resize
     this._positionEl();
+    markPreviewSourceDirty();
   }
 
   select() {
@@ -1194,13 +1590,14 @@ function addTextField(xPct, yPct) {
   const tf = new TextField(xPct, yPct, style);
   tf.activePreset = state.lastPreset; // inherit last-used preset (null = manually edited)
   state.textFields.push(tf);
+  markPreviewSourceDirty();
   // Don't call selectField() here — the focus event on innerEl will do it.
   // Use a short timeout so the element is fully laid out before focus.
   tf.el.classList.add('selected'); // show as selected immediately
   updatePanel();                   // show controls immediately
   loadFieldStyle(tf);
   // Ensure layer-mode filter preview is applied to newly created text fields.
-  applyImageFilter();
+  scheduleImageFilterRender({ settle: true });
   setTimeout(() => tf.innerEl.focus(), 30);
   return tf;
 }
@@ -1211,6 +1608,7 @@ function deleteField(tf) {
   if (state.selectedField === tf) {
     state.selectedField = null;
   }
+  markPreviewSourceDirty();
   updatePanel();
 }
 
@@ -1226,8 +1624,9 @@ function selectField(tf) {
   }
   state.selectedField = tf;
   tf.select();
+  markPreviewSourceDirty();
   syncTextFieldLayering();
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ settle: true });
   loadFieldStyle(tf);
   updatePanel();
 }
@@ -1239,8 +1638,9 @@ function deselectAll() {
     state.selectedField.deselect();
     state.selectedField = null;
   }
+  markPreviewSourceDirty();
   syncTextFieldLayering();
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ settle: true });
   updatePanel();
 }
 
@@ -1836,6 +2236,32 @@ let grainBufferW   = 0;
 let grainBufferH   = 0;
 let grainNoiseTs   = 0;
 
+const previewSourceCache = {
+  dirty: true,
+  w: 0,
+  h: 0,
+  key: '',
+  data: null,
+};
+
+function markPreviewSourceDirty() {
+  previewSourceCache.dirty = true;
+}
+
+function makePreviewSourceCacheKey(w, h) {
+  const selectedId = state.selectedField ? state.selectedField.id : -1;
+  return `${w}x${h}|onTop:${state.filter.applyOnTop ? 1 : 0}|sel:${selectedId}`;
+}
+
+function ensureVaporSrcContext() {
+  if (!vaporSrcCanvas) {
+    vaporSrcCanvas = document.createElement('canvas');
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d', { willReadFrequently: true });
+  } else if (!vaporSrcCtx) {
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d', { willReadFrequently: true });
+  }
+}
+
 function makeOverlayCanvas() {
   const el = document.createElement('canvas');
   el.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
@@ -1864,9 +2290,11 @@ function isTextFilterBypassed(tf) {
 }
 
 function drawPreviewTextLayers(ctx, w, h) {
-  const previewScale = (baseImage.offsetWidth > 0)
-    ? (state.imageNaturalW / baseImage.offsetWidth)
-    : 1;
+  const renderedW = baseImage.offsetWidth || 1;
+  const renderedH = baseImage.offsetHeight || 1;
+  const previewScale = state.imageNaturalW > 0 ? (state.imageNaturalW / w) : 1;
+  const sx = w / renderedW;
+  const sy = h / renderedH;
   const containerRect = canvasContainer.getBoundingClientRect();
   const imgRect = baseImage.getBoundingClientRect();
   const imgOffsetX = imgRect.left - containerRect.left;
@@ -1875,14 +2303,14 @@ function drawPreviewTextLayers(ctx, w, h) {
   for (const tf of state.textFields) {
     if (isTextFilterBypassed(tf)) continue;
     const s = tf.style;
-    const cx = tf.xPct * canvasContainer.offsetWidth  - imgOffsetX;
-    const cy = tf.yPct * canvasContainer.offsetHeight - imgOffsetY;
+    const cx = (tf.xPct * canvasContainer.offsetWidth  - imgOffsetX) * sx;
+    const cy = (tf.yPct * canvasContainer.offsetHeight - imgOffsetY) * sy;
     const fontSize = s.size / 100 * w;
     const lines = tf.innerEl.innerText.split('\n');
     const lineHeight = fontSize * 1.2;
     const totalH = lines.length * lineHeight;
     const startY = cy - totalH / 2 + lineHeight / 2;
-    const elHalfW = tf.innerEl.offsetWidth / 2;
+    const elHalfW = (tf.innerEl.offsetWidth * sx) / 2;
     const lx = s.align === 'left'  ? cx - elHalfW :
                s.align === 'right' ? cx + elHalfW :
                cx;
@@ -2013,10 +2441,7 @@ function updateChromaOverlay() {
 
   // Render the exact export filter logic at preview resolution so the editor
   // image matches the saved JPEG (including chroma and scanlines).
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2063,10 +2488,7 @@ function updateSolarpunkOverlay() {
   solarpunkEl.style.display = '';
   solarpunkEl.style.opacity = '1';
 
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2110,10 +2532,7 @@ function updateHegsethOverlay() {
   hegsethEl.style.display = '';
   hegsethEl.style.opacity = '1';
 
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2157,10 +2576,7 @@ function updateMexicoOverlay() {
   mexicoEl.style.display = '';
   mexicoEl.style.opacity = '1';
 
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2192,7 +2608,45 @@ function hideLegacyFilterOverlays() {
   if (mexicoEl) mexicoEl.style.display = 'none';
 }
 
-function updateFinalFilterPreviewOverlay() {
+const PREVIEW_INTERACTION_FPS = 60;
+const PREVIEW_INTERACTION_WINDOW_MS = 160;
+const SETTLE_MODE_MIN_SAMPLES = 16;
+const SETTLE_MODE_TOTAL_MS_HIGH = 26;
+const SETTLE_MODE_FILTER_MS_LOW = 9;
+
+let _previewInteractionUntilTs = 0;
+let _previewSettleRequested = false;
+let _previewRenderSeq = 0;
+let _previewRenderedSeq = 0;
+let _previewRenderInFlight = false;
+let _previewRenderPending = false;
+let _previewThrottleTimer = 0;
+let _lastPreviewRenderTs = 0;
+
+function computePreviewTargetSize(quality = 'settle') {
+  const renderedW = baseImage.offsetWidth || 1;
+  const renderedH = baseImage.offsetHeight || 1;
+  return {
+    w: Math.max(1, Math.round(renderedW)),
+    h: Math.max(1, Math.round(renderedH)),
+  };
+}
+
+function pickSettleExecMode() {
+  if (perf.workerErrors > 0 || perf.workerTimeouts > 0) return 'main';
+  if (perf.previewSamples.length < SETTLE_MODE_MIN_SAMPLES) return 'worker';
+  const totalP95 = perfSummary(perf.previewSamples, 'totalMs').p95;
+  const filterP95 = perfSummary(perf.previewSamples, 'filterMs').p95;
+  // If total cost is high but filter work is light, worker round-trip overhead
+  // is likely dominating; prefer main-thread for settle in that case.
+  if (totalP95 >= SETTLE_MODE_TOTAL_MS_HIGH && filterP95 <= SETTLE_MODE_FILTER_MS_LOW) {
+    return 'main';
+  }
+  return 'worker';
+}
+
+async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
+  const previewStartTs = performance.now();
   const name = state.filter.name;
   if (name === 'none') {
     if (finalPreviewEl) finalPreviewEl.style.display = 'none';
@@ -2202,42 +2656,100 @@ function updateFinalFilterPreviewOverlay() {
   updateOverlayLayering(finalPreviewEl);
   finalPreviewEl.style.mixBlendMode = 'normal';
 
-  const w = baseImage.offsetWidth  || 1;
-  const h = baseImage.offsetHeight || 1;
+  const { w, h } = computePreviewTargetSize(quality);
   const t = state.filter.intensity / 100;
 
-  finalPreviewEl.width = w;
-  finalPreviewEl.height = h;
-  finalPreviewEl.style.display = '';
-  finalPreviewEl.style.opacity = '1';
-
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
+    markPreviewSourceDirty();
   }
-  vaporSrcCtx.clearRect(0, 0, w, h);
-  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
-  if (state.filter.applyOnTop) {
-    drawPreviewTextLayers(vaporSrcCtx, w, h);
+  const sourceKey = makePreviewSourceCacheKey(w, h);
+  let sourceBuildMs = 0;
+  let sourceCopyMs = 0;
+  let sourceCacheHit = false;
+  let previewData;
+  if (!previewSourceCache.dirty &&
+      previewSourceCache.data &&
+      previewSourceCache.w === w &&
+      previewSourceCache.h === h &&
+      previewSourceCache.key === sourceKey) {
+    sourceCacheHit = true;
+    const sourceCopyStart = performance.now();
+    previewData = vaporSrcCtx.createImageData(w, h);
+    previewData.data.set(previewSourceCache.data);
+    sourceCopyMs = performance.now() - sourceCopyStart;
+  } else {
+    const sourceBuildStart = performance.now();
+    vaporSrcCtx.clearRect(0, 0, w, h);
+    vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+    if (state.filter.applyOnTop) {
+      drawPreviewTextLayers(vaporSrcCtx, w, h);
+    }
+    previewData = vaporSrcCtx.getImageData(0, 0, w, h);
+    sourceBuildMs = performance.now() - sourceBuildStart;
+    previewSourceCache.data = new Uint8ClampedArray(previewData.data);
+    previewSourceCache.w = w;
+    previewSourceCache.h = h;
+    previewSourceCache.key = sourceKey;
+    previewSourceCache.dirty = false;
   }
-  const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
-  FILTERS[name].apply(
-    previewData.data,
+  // Match perceived intensity with export for scale-sensitive filters by
+  // compensating for preview downscale. Export uses natural/rendered scale,
+  // while preview is displayed back up to rendered size.
+  const renderedW = baseImage.offsetWidth || w;
+  const pixelScale = renderedW > 0 ? (w / renderedW) : 1;
+  const filterStartTs = performance.now();
+  const settleExecMode = quality === 'settle' ? pickSettleExecMode() : 'main';
+  perf.settleExecMode = settleExecMode;
+  const preferMainThread = quality === 'interactive' || settleExecMode === 'main';
+  const filterResult = await runFilterInWorker(
+    name,
+    previewData,
     w,
     h,
     t,
-    state.filter.params
+    state.filter.params,
+    pixelScale,
+    { forceMainThread: preferMainThread }
   );
+  const filterEndTs = performance.now();
+  previewData.data.set(filterResult.data);
+  if (renderSeq !== _previewRenderSeq) {
+    perf.stalePreviewDrops++;
+    renderPerfPanel();
+    return;
+  }
+  if (finalPreviewEl.width !== w) finalPreviewEl.width = w;
+  if (finalPreviewEl.height !== h) finalPreviewEl.height = h;
+  finalPreviewEl.style.display = '';
+  finalPreviewEl.style.opacity = '1';
+  const commitStartTs = performance.now();
   const pc = finalPreviewEl.getContext('2d');
   pc.putImageData(previewData, 0, 0);
+  const endTs = performance.now();
+  recordPreviewPerf({
+    filter: name,
+    quality,
+    w,
+    h,
+    queueWaitMs: perf.previewRenderQueueWaitMs,
+    composeMs: sourceBuildMs + sourceCopyMs,
+    sourceBuildMs,
+    sourceCopyMs,
+    sourceCacheHit,
+    filterMs: filterEndTs - filterStartTs,
+    commitMs: endTs - commitStartTs,
+    totalMs: endTs - previewStartTs,
+    worker: filterResult.usedWorker,
+    workerFallback: filterResult.fellBack,
+    mainThread: preferMainThread,
+    settleExecMode,
+  });
 }
 
-function applyImageFilter() {
-  const name = state.filter.name;
+async function applyImageFilter(renderSeq, quality = 'settle') {
   canvasContainer.style.filter = '';
   baseImage.style.filter = '';
 
@@ -2248,16 +2760,86 @@ function applyImageFilter() {
   }
   syncTextFieldLayering();
   hideLegacyFilterOverlays();
-  updateFinalFilterPreviewOverlay();
+  await updateFinalFilterPreviewOverlay(renderSeq, quality);
 }
 
 let _filterRenderRaf = 0;
 let _resizeRaf = 0;
-function scheduleImageFilterRender() {
-  if (_filterRenderRaf) return;
+
+function runScheduledPreviewRender() {
+  if (_previewRenderInFlight) {
+    _previewRenderPending = true;
+    perf.previewPendingCount = Math.max(perf.previewPendingCount, 1);
+    perf.previewQueueDepthMax = Math.max(perf.previewQueueDepthMax, perf.previewPendingCount);
+    renderPerfPanel();
+    return;
+  }
+  _previewRenderInFlight = true;
+  perf.previewRenderInFlight = 1;
+  perf.previewPendingCount = 0;
+  perf.previewRenderQueueWaitMs = perf.previewInputTs > 0 ? Math.max(0, performance.now() - perf.previewInputTs) : 0;
+  const renderSeq = _previewRenderSeq;
+  const now = performance.now();
+  const isInteractive = !_previewSettleRequested && now < _previewInteractionUntilTs;
+  const quality = isInteractive ? 'interactive' : 'settle';
+  if (isInteractive) _lastPreviewRenderTs = now;
+  _previewSettleRequested = false;
+  Promise.resolve(applyImageFilter(renderSeq, quality))
+    .catch(() => {})
+    .finally(() => {
+      _previewRenderInFlight = false;
+      perf.previewRenderInFlight = 0;
+      _previewRenderedSeq = renderSeq;
+      if (_previewRenderPending || _previewRenderedSeq !== _previewRenderSeq) {
+        _previewRenderPending = false;
+        perf.previewPendingCount = Math.max(perf.previewPendingCount, 1);
+        perf.previewQueueDepthMax = Math.max(perf.previewQueueDepthMax, perf.previewPendingCount);
+        scheduleImageFilterRender();
+      } else {
+        perf.previewPendingCount = 0;
+      }
+      renderPerfPanel();
+    });
+}
+
+function scheduleImageFilterRender(opts = {}) {
+  perf.previewInputTs = performance.now();
+  if (opts.interactive) {
+    _previewInteractionUntilTs = performance.now() + PREVIEW_INTERACTION_WINDOW_MS;
+  }
+  if (opts.settle) {
+    _previewSettleRequested = true;
+    _previewInteractionUntilTs = 0;
+  }
+  _previewRenderSeq++;
+  if (_previewRenderInFlight) {
+    _previewRenderPending = true;
+    perf.previewPendingCount = Math.max(perf.previewPendingCount, 1);
+    perf.previewQueueDepthMax = Math.max(perf.previewQueueDepthMax, perf.previewPendingCount);
+    renderPerfPanel();
+    return;
+  }
+  if (_filterRenderRaf || _previewThrottleTimer) return;
+  if (opts.immediate) {
+    runScheduledPreviewRender();
+    return;
+  }
+  const now = performance.now();
+  const isInteractive = !_previewSettleRequested && now < _previewInteractionUntilTs;
+  if (isInteractive && !opts.noThrottle) {
+    const minFrameMs = Math.round(1000 / PREVIEW_INTERACTION_FPS);
+    const wait = Math.max(0, minFrameMs - (now - _lastPreviewRenderTs));
+    if (wait > 0) {
+      _previewThrottleTimer = window.setTimeout(() => {
+        _previewThrottleTimer = 0;
+        scheduleImageFilterRender();
+      }, wait);
+      return;
+    }
+  }
   _filterRenderRaf = requestAnimationFrame(() => {
     _filterRenderRaf = 0;
-    applyImageFilter();
+    runScheduledPreviewRender();
   });
 }
 
@@ -2283,6 +2865,10 @@ filterChips.forEach(chip => {
     if (_filterRenderRaf) {
       cancelAnimationFrame(_filterRenderRaf);
       _filterRenderRaf = 0;
+    }
+    if (_previewThrottleTimer) {
+      clearTimeout(_previewThrottleTimer);
+      _previewThrottleTimer = 0;
     }
     hideLegacyFilterOverlays();
     if (finalPreviewEl) finalPreviewEl.style.display = 'none';
@@ -2310,68 +2896,88 @@ filterChips.forEach(chip => {
       ctrlHegsethGhostDistance.value = state.filter.params.ghostDistance;
     }
     updateVibeExtraControls();
-    applyImageFilter();
+    scheduleImageFilterRender({ settle: true });
   });
 });
 
 ctrlFilterIntensity.addEventListener('input', () => {
   state.filter.intensity = parseInt(ctrlFilterIntensity.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlFilterOnTop.addEventListener('change', () => {
   state.filter.applyOnTop = ctrlFilterOnTop.checked;
-  scheduleImageFilterRender();
+  markPreviewSourceDirty();
+  scheduleImageFilterRender({ settle: true });
 });
 
 ctrlGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlGrain.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlScanlines.addEventListener('input', () => {
   state.filter.params.scanlines = parseInt(ctrlScanlines.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlScanlineSize.addEventListener('input', () => {
   state.filter.params.scanlineSize = parseInt(ctrlScanlineSize.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlChroma.addEventListener('input', () => {
   state.filter.params.chroma = parseInt(ctrlChroma.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlDaGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlDaGrain.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlVignette.addEventListener('input', () => {
   state.filter.params.vignette = parseInt(ctrlVignette.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlBloom.addEventListener('input', () => {
   state.filter.params.bloom = parseInt(ctrlBloom.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlHaze.addEventListener('input', () => {
   state.filter.params.haze = parseInt(ctrlHaze.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlHegsethAngle.addEventListener('input', () => {
   state.filter.params.angle = parseInt(ctrlHegsethAngle.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlHegsethGhostDistance.addEventListener('input', () => {
   state.filter.params.ghostDistance = parseInt(ctrlHegsethGhostDistance.value);
-  scheduleImageFilterRender();
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+});
+
+[
+  ctrlFilterIntensity,
+  ctrlGrain,
+  ctrlScanlines,
+  ctrlScanlineSize,
+  ctrlChroma,
+  ctrlDaGrain,
+  ctrlVignette,
+  ctrlBloom,
+  ctrlHaze,
+  ctrlHegsethAngle,
+  ctrlHegsethGhostDistance,
+].forEach((el) => {
+  if (!el) return;
+  el.addEventListener('change', () => {
+    scheduleImageFilterRender({ settle: true });
+  });
 });
 
 ctrlFgColor.addEventListener('input', () => {
@@ -2429,7 +3035,8 @@ function softBlur(ctx, w, h, radius) {
   const r   = Math.max(1, Math.round(radius));
   const id  = ctx.getImageData(0, 0, w, h);
   const d   = id.data;
-  const tmp = new Uint8ClampedArray(d.length);
+  const blurScratch = getFilterScratch('__soft_blur__', d.length);
+  const tmp = blurScratch.orig;
   const diam = 2 * r + 1;
 
   for (let pass = 0; pass < 3; pass++) {
@@ -2472,19 +3079,22 @@ function softBlur(ctx, w, h, radius) {
   ctx.putImageData(id, 0, 0);
 }
 
-function applyActiveFilterToContext(ctx, w, h, pixelScale) {
+async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   if (state.filter.name === 'none') return;
   const imgData = ctx.getImageData(0, 0, w, h);
   const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth') ? pixelScale : 1;
-  FILTERS[state.filter.name].apply(
-    imgData.data,
+  const result = await runFilterInWorker(
+    state.filter.name,
+    imgData,
     w,
     h,
     state.filter.intensity / 100,
     state.filter.params,
     scaleForFilter
   );
+  imgData.data.set(result.data);
   ctx.putImageData(imgData, 0, 0);
+  return result;
 }
 
 function drawTextLayersForExport(ctx, nw, nh, scale) {
@@ -2497,7 +3107,7 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width  = nw;
   tempCanvas.height = nh;
-  const tc = tempCanvas.getContext('2d');
+  const tc = tempCanvas.getContext('2d', { willReadFrequently: true });
 
   for (const tf of state.textFields) {
     const s = tf.style;
@@ -2554,6 +3164,7 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
 }
 
 async function renderCurrentImageBlob(options = {}) {
+  const exportStartTs = performance.now();
   const {
     mime = 'image/jpeg',
     quality = 0.93,
@@ -2569,26 +3180,58 @@ async function renderCurrentImageBlob(options = {}) {
 
   exportCanvas.width  = nw;
   exportCanvas.height = nh;
-  const ctx = exportCanvas.getContext('2d');
+  const ctx = exportCanvas.getContext('2d', { willReadFrequently: true });
+  let filterMs = 0;
+  let textMs = 0;
+  let workerUsed = false;
+  let workerFallback = false;
 
   // Draw base image
   ctx.drawImage(img, 0, 0, nw, nh);
 
   // Apply filter before text (default behavior) or after text (on-top mode).
   if (!state.filter.applyOnTop) {
-    applyActiveFilterToContext(ctx, nw, nh, scale);
+    const t0 = performance.now();
+    const result = await applyActiveFilterToContext(ctx, nw, nh, scale);
+    filterMs += performance.now() - t0;
+    if (result) {
+      workerUsed = workerUsed || !!result.usedWorker;
+      workerFallback = workerFallback || !!result.fellBack;
+    }
   }
 
+  const textStartTs = performance.now();
   drawTextLayersForExport(ctx, nw, nh, scale);
+  textMs += performance.now() - textStartTs;
 
   if (state.filter.applyOnTop) {
-    applyActiveFilterToContext(ctx, nw, nh, scale);
+    const t0 = performance.now();
+    const result = await applyActiveFilterToContext(ctx, nw, nh, scale);
+    filterMs += performance.now() - t0;
+    if (result) {
+      workerUsed = workerUsed || !!result.usedWorker;
+      workerFallback = workerFallback || !!result.fellBack;
+    }
   }
 
+  const blobStartTs = performance.now();
   const blob = await new Promise(resolve =>
     exportCanvas.toBlob(resolve, mime, quality)
   );
   if (!blob) throw new Error(`Failed to render ${mime} image`);
+  const endTs = performance.now();
+  recordExportPerf({
+    filter: state.filter.name,
+    w: nw,
+    h: nh,
+    filterMs,
+    textMs,
+    encodeMs: endTs - blobStartTs,
+    totalMs: endTs - exportStartTs,
+    worker: workerUsed,
+    workerFallback,
+    applyOnTop: !!state.filter.applyOnTop,
+  });
   return blob;
 }
 
@@ -2851,7 +3494,33 @@ let _saveKeyTapCount = 0;
 let _saveKeyTimer = 0;
 let _copyKeyTapCount = 0;
 let _copyKeyTimer = 0;
+let _devKeyTapCount = 0;
+let _devKeyTimer = 0;
 const ACTION_KEY_DBL_TAP_MS = 800;
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!editorScreen.classList.contains('active')) return;
+  if (e.key.toLowerCase() !== 'd') return;
+  const active = document.activeElement;
+  if (active?.isContentEditable) return;
+  _devKeyTapCount += 1;
+  if (_devKeyTapCount < 2) {
+    if (_devKeyTimer) clearTimeout(_devKeyTimer);
+    _devKeyTimer = setTimeout(() => {
+      _devKeyTapCount = 0;
+      _devKeyTimer = 0;
+    }, ACTION_KEY_DBL_TAP_MS);
+    return;
+  }
+  _devKeyTapCount = 0;
+  if (_devKeyTimer) {
+    clearTimeout(_devKeyTimer);
+    _devKeyTimer = 0;
+  }
+  e.preventDefault();
+  setDevMode(!perf.devMode);
+});
 
 window.addEventListener('keydown', async (e) => {
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -2972,7 +3641,8 @@ window.addEventListener('resize', () => {
     state.textFields.forEach(tf => tf.reposition());
     if (state.imageLoaded) {
       fitImageToWrapper();
-      scheduleImageFilterRender();
+      markPreviewSourceDirty();
+      scheduleImageFilterRender({ settle: true });
     }
   });
 });
