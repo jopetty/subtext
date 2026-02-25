@@ -1,0 +1,62 @@
+{
+  "train_avg_mae": 2.7694361209869385,
+  "train_avg_rmse": 3.6989030838012695,
+  "val_avg_mae": 12.067258358001709,
+  "val_avg_rmse": 19.525733947753906,
+  "per_image": [
+    {
+      "key": "a",
+      "split": "train",
+      "in": "a_in.jpg",
+      "out": "a_out.jpg",
+      "pred": "a_pred.jpg",
+      "mae": 2.9029765129089355,
+      "rmse": 3.9729526042938232
+    },
+    {
+      "key": "b",
+      "split": "train",
+      "in": "b_in.jpg",
+      "out": "b_out.jpg",
+      "pred": "b_pred.jpg",
+      "mae": 2.5604748725891113,
+      "rmse": 3.464695453643799
+    },
+    {
+      "key": "c",
+      "split": "train",
+      "in": "c_in.jpg",
+      "out": "c_out.jpg",
+      "pred": "c_pred.jpg",
+      "mae": 2.468139171600342,
+      "rmse": 3.2724316120147705
+    },
+    {
+      "key": "d",
+      "split": "train",
+      "in": "d_in.jpg",
+      "out": "d_out.jpg",
+      "pred": "d_pred.jpg",
+      "mae": 3.1461539268493652,
+      "rmse": 4.0855326652526855
+    },
+    {
+      "key": "val_baseball",
+      "split": "val",
+      "in": "val_baseball_in.jpg",
+      "out": "val_baseball_out.jpg",
+      "pred": "val_baseball_pred.jpg",
+      "mae": 12.058687210083008,
+      "rmse": 20.226099014282227
+    },
+    {
+      "key": "val_e",
+      "split": "val",
+      "in": "val_e_in.jpg",
+      "out": "val_e_out.jpg",
+      "pred": "val_e_pred.jpg",
+      "mae": 12.07582950592041,
+      "rmse": 18.825368881225586
+    }
+  ]
+}

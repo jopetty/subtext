@@ -74,6 +74,33 @@ const PRESETS = {
 
 function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
 
+const TWILIGHT_POLY_MAX_DEG = 2;
+const TWILIGHT_POLY_EXPS = (() => {
+  const exps = [];
+  for (let deg = 0; deg <= TWILIGHT_POLY_MAX_DEG; deg++) {
+    for (let a = deg; a >= 0; a--) {
+      for (let b = deg - a; b >= 0; b--) {
+        const c = deg - a - b;
+        exps.push([a, b, c]);
+      }
+    }
+  }
+  return exps;
+})();
+
+const TWILIGHT_POLY_COEFS = [
+  [0.00597373, 0.03161590, 0.01277683],
+  [0.29334462, 0.00999607, 0.00449393],
+  [-0.01554910, 1.07771063, 0.21552968],
+  [0.02220535, -0.08185787, 0.94232863],
+  [0.73997974, -0.32378590, -0.41492039],
+  [-1.44380820, -0.19136424, -0.00707934],
+  [0.68360651, 0.79999304, 0.72149783],
+  [0.77170402, 0.12911780, 0.38621324],
+  [-0.50027823, -1.23625672, -0.93374157],
+  [0.12329674, 0.62832433, -0.23901433],
+];
+
 // Each vibe has:
 //   cssPreview(t)         → CSS filter string for instant live preview (t = 0–1)
 //   apply(data, w, h, t)  → pixel-level function used during canvas export
@@ -145,30 +172,40 @@ const FILTERS = {
   twilight: {
     label: 'Twilight',
     cssPreview: (t) =>
-      `saturate(${1 - 0.04*t}) hue-rotate(${-12*t}deg) brightness(${1 - 0.12*t}) contrast(${1 + 0.1*t})`,
+      `saturate(${1 - 0.03*t}) hue-rotate(${-10*t}deg) brightness(${1 - 0.08*t}) contrast(1)`,
     apply(data, w, h, t) {
+      const blend = Math.max(0, Math.min(1, t));
+      const invBlend = 1 - blend;
+      const rp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
+      const gp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
+      const bp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
       for (let i = 0; i < data.length; i += 4) {
-        let r = data[i], g = data[i+1], b = data[i+2];
-        const lm = 0.299*r + 0.587*g + 0.114*b;
-        const bright = lm / 255;
+        const sr = data[i] / 255;
+        const sg = data[i + 1] / 255;
+        const sb = data[i + 2] / 255;
+        rp[0] = 1; gp[0] = 1; bp[0] = 1;
+        for (let d = 1; d <= TWILIGHT_POLY_MAX_DEG; d++) {
+          rp[d] = rp[d - 1] * sr;
+          gp[d] = gp[d - 1] * sg;
+          bp[d] = bp[d - 1] * sb;
+        }
+        let tr = 0;
+        let tg = 0;
+        let tb = 0;
+        for (let k = 0; k < TWILIGHT_POLY_EXPS.length; k++) {
+          const ex = TWILIGHT_POLY_EXPS[k];
+          const v = rp[ex[0]] * gp[ex[1]] * bp[ex[2]];
+          tr += v * TWILIGHT_POLY_COEFS[k][0];
+          tg += v * TWILIGHT_POLY_COEFS[k][1];
+          tb += v * TWILIGHT_POLY_COEFS[k][2];
+        }
 
-        // Aggressive cool cast with added green for cyan/teal balance.
-        r = clamp255(r - (32 + 14 * bright) * t);
-        g = clamp255(g + (20 + 14 * (1 - bright)) * t);
-        b = clamp255(b + (50 + 24 * (1 - bright)) * t);
-
-        // Keep it moody while preserving strong chroma in blues.
-        const s = 1 - 0.03 * t;
-        r = clamp255(lm + (r - lm) * s);
-        g = clamp255(lm + (g - lm) * s);
-        b = clamp255(lm + (b - lm) * s);
-
-        // Stronger contrast + darker exposure.
-        const c = 1 + 0.1 * t;
-        const br = 1 - 0.12 * t;
-        data[i]   = clamp255(((r - 128) * c + 128) * br);
-        data[i+1] = clamp255(((g - 128) * c + 128) * br);
-        data[i+2] = clamp255(((b - 128) * c + 128) * br);
+        tr = tr < 0 ? 0 : tr > 1 ? 1 : tr;
+        tg = tg < 0 ? 0 : tg > 1 ? 1 : tg;
+        tb = tb < 0 ? 0 : tb > 1 ? 1 : tb;
+        data[i] = clamp255((sr * invBlend + tr * blend) * 255);
+        data[i + 1] = clamp255((sg * invBlend + tg * blend) * 255);
+        data[i + 2] = clamp255((sb * invBlend + tb * blend) * 255);
       }
     },
   },
@@ -178,23 +215,21 @@ const FILTERS = {
     cssPreview: (t) =>
       `sepia(${0.8*t}) saturate(${1 + 0.2*t}) hue-rotate(${-20*t}deg) brightness(${1 - 0.1*t}) contrast(1)`,
     apply(data, w, h, t) {
-      // Polynomial LUT-like transform fitted to the approved Mexico reference.
-      // Features: [1, r, g, b, r^2, g^2, b^2, rg, rb, gb, r^3, g^3, b^3]
+      // Polynomial LUT-like transform (low complexity, degree 2) trained via
+      // lut_trainer/create_lut.py from paired Mexico grade examples.
+      // Features: [1, r, g, b, r^2, rg, rb, g^2, gb, b^2]
       // Output is blended with source by intensity t so the slider remains smooth.
       const C = [
-        [-0.03113131,  0.00791518,  0.00020257],
-        [ 1.6186612,   0.12332164, -0.29436573],
-        [ 0.30831575,  0.11437935,  0.40113863],
-        [-0.07751509,  0.08578058,  0.04193583],
-        [ 1.3786694,  -0.927459,    0.8342466],
-        [ 0.66139346,  0.7589711,  -0.5263351],
-        [ 0.00356758, -0.11500254, -0.19840924],
-        [-1.5515617,   1.399745,   -0.7633836],
-        [ 0.65784,    -0.35091248,  0.19579142],
-        [-0.7448524,   0.34371102, -0.3687974],
-        [-1.7140733,   0.30859822, -0.32110405],
-        [ 0.22647619, -0.7518108,   0.823262],
-        [ 0.18237661,  0.01828179,  0.87928236],
+        [-0.07086585, -0.00842946,  0.05177793],
+        [ 2.62209105, -0.02575670, -0.16334338],
+        [-0.03539947,  0.49390715, -0.02859681],
+        [-0.06194337,  0.07698684, -0.37386778],
+        [-1.17756331, -0.50214225,  0.36419725],
+        [-1.18718219,  1.39672267, -0.53655916],
+        [ 0.28874910, -0.36011073,  0.09994905],
+        [ 0.95353884, -0.27611768,  0.52998900],
+        [-0.38004848,  0.38436118, -0.40951315],
+        [ 0.03741731, -0.13591971,  1.07161438],
       ];
       const blend = Math.max(0, Math.min(1, t));
       const invBlend = 1 - blend;
@@ -206,18 +241,15 @@ const FILTERS = {
         const rr = sr * sr;
         const gg = sg * sg;
         const bb = sb * sb;
-        const rrr = rr * sr;
-        const ggg = gg * sg;
-        const bbb = bb * sb;
         const rg = sr * sg;
         const rb = sr * sb;
         const gb = sg * sb;
 
-        const f = [1, sr, sg, sb, rr, gg, bb, rg, rb, gb, rrr, ggg, bbb];
+        const f = [1, sr, sg, sb, rr, rg, rb, gg, gb, bb];
         let tr = 0;
         let tg = 0;
         let tb = 0;
-        for (let k = 0; k < 13; k++) {
+        for (let k = 0; k < 10; k++) {
           tr += f[k] * C[k][0];
           tg += f[k] * C[k][1];
           tb += f[k] * C[k][2];

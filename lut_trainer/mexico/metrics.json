@@ -1,0 +1,26 @@
+{
+  "train_avg_mae": 3.7865867614746094,
+  "train_avg_rmse": 5.502012729644775,
+  "val_avg_mae": 5.579254627227783,
+  "val_avg_rmse": 8.52245807647705,
+  "per_image": [
+    {
+      "key": "baseball",
+      "split": "train",
+      "in": "baseball_in.jpg",
+      "out": "baseball_out.jpg",
+      "pred": "baseball_pred.jpg",
+      "mae": 3.7865867614746094,
+      "rmse": 5.502012729644775
+    },
+    {
+      "key": "val_ginko",
+      "split": "val",
+      "in": "val_ginko_in.jpg",
+      "out": "val_ginko_out.jpg",
+      "pred": "val_ginko_pred.jpg",
+      "mae": 5.579254627227783,
+      "rmse": 8.52245807647705
+    }
+  ]
+}

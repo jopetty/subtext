@@ -1,0 +1,77 @@
+{
+  "dataset": "mexico",
+  "complexity": "low",
+  "max_degree": 2,
+  "selected_degree": 2,
+  "selected_lambda": 0.05,
+  "sample_size": 200000,
+  "lambdas": [
+    0.001,
+    0.01,
+    0.05
+  ],
+  "num_features": 10,
+  "intensity_for_preds": 1.0,
+  "train_pairs": [
+    "baseball"
+  ],
+  "val_pairs": [
+    "val_ginko"
+  ],
+  "train_fit_mae": 3.785205841064453,
+  "train_fit_rmse": 5.503273010253906,
+  "val_select_mae": 5.579254627227783,
+  "val_select_rmse": 8.52245807647705,
+  "exps": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      1
+    ],
+    [
+      2,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      0
+    ],
+    [
+      1,
+      0,
+      1
+    ],
+    [
+      0,
+      2,
+      0
+    ],
+    [
+      0,
+      1,
+      1
+    ],
+    [
+      0,
+      0,
+      2
+    ]
+  ]
+}

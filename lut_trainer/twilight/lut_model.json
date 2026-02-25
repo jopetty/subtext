@@ -1,0 +1,81 @@
+{
+  "dataset": "twilight",
+  "complexity": "low",
+  "max_degree": 2,
+  "selected_degree": 2,
+  "selected_lambda": 0.05,
+  "sample_size": 200000,
+  "lambdas": [
+    0.001,
+    0.01,
+    0.05
+  ],
+  "num_features": 10,
+  "intensity_for_preds": 1.0,
+  "train_pairs": [
+    "a",
+    "b",
+    "c",
+    "d"
+  ],
+  "val_pairs": [
+    "val_baseball",
+    "val_e"
+  ],
+  "train_fit_mae": 2.747558832168579,
+  "train_fit_rmse": 3.685354709625244,
+  "val_select_mae": 12.067258358001709,
+  "val_select_rmse": 19.525733947753906,
+  "exps": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      1
+    ],
+    [
+      2,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      0
+    ],
+    [
+      1,
+      0,
+      1
+    ],
+    [
+      0,
+      2,
+      0
+    ],
+    [
+      0,
+      1,
+      1
+    ],
+    [
+      0,
+      0,
+      2
+    ]
+  ]
+}
