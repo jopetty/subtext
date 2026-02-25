@@ -574,11 +574,43 @@ html, body {
   box-shadow: 0 0 4px rgba(255, 215, 60, 0.5);
 }
 
+.guide-rotate {
+  z-index: 85;
+}
+
+.guide-rotate-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: rgba(86, 171, 255, 0.28);
+}
+
+.guide-rotate-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+  background: rgba(86, 171, 255, 0.28);
+}
+
+@keyframes rotateGuideFlash {
+  from { opacity: 1; }
+  to { opacity: 0.75; }
+}
+
+.guide-rotate-v.snapped,
+.guide-rotate-h.snapped {
+  background: rgba(86, 171, 255, 0.95);
+  box-shadow: 0 0 8px rgba(86, 171, 255, 0.65);
+  animation: rotateGuideFlash 120ms ease-in-out 0s 2 alternate;
+}
+
 /* ===== TEXT FIELDS ===== */
 
 .text-field {
   position: absolute;
-  cursor: move;
+  cursor: grab;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -591,7 +623,7 @@ html, body {
 
 
 .text-field-delete,
-.text-field-drag {
+.text-field-rotate {
   display: none;
   position: absolute;
   width: 22px;
@@ -610,7 +642,7 @@ html, body {
 }
 
 .text-field.selected .text-field-delete,
-.text-field.selected .text-field-drag {
+.text-field.selected .text-field-rotate {
   display: flex;
 }
 
@@ -621,16 +653,33 @@ html, body {
   cursor: pointer;
 }
 
-.text-field-drag {
+.text-field-rotate {
   top: -14px;
   right: -14px;
   background: var(--accent);
   cursor: grab;
-  /* Never let the browser treat touches on the drag handle as scroll gestures */
-  touch-action: none;
+  padding: 0;
 }
 
-.text-field-drag:active {
+.text-field-rotate img {
+  width: 14px;
+  height: 14px;
+  display: block;
+  filter: brightness(0) invert(1);
+}
+
+.text-field-delete > svg,
+.text-field-rotate > img {
+  transform: rotate(calc(var(--object-rotate-deg, 0deg) * -1));
+  transform-origin: center;
+}
+
+.text-field-rotate.snapped {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 0 8px rgba(255, 255, 255, 0.4);
+}
+
+.text-field.dragging,
+.text-field.rotating .text-field-rotate {
   cursor: grabbing;
 }
 
@@ -640,7 +689,7 @@ html, body {
   white-space: pre-wrap;
   word-break: break-word;
   outline: none;
-  cursor: text;
+  cursor: inherit;
   text-align: center;
   /* Explicit line-height and padding so the selection outline
      properly contains cap-height, descenders, and stroke overflow */
@@ -649,6 +698,11 @@ html, body {
   /* Override parent's user-select: none so text editing works */
   user-select: text;
   -webkit-user-select: text;
+}
+
+.text-field.editing,
+.text-field.editing .text-field-inner {
+  cursor: text;
 }
 
 .text-field.selected {

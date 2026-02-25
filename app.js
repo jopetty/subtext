@@ -207,6 +207,7 @@ const PRESETS = {
     font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
     lineHeight:   1.2,
+    rotateDeg:    0,
     weight:       '400',
     italic:       false,
     align:        'center',
@@ -219,6 +220,7 @@ const PRESETS = {
     font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
     lineHeight:   1.2,
+    rotateDeg:    0,
     weight:       '400',
     italic:       true,
     align:        'center',
@@ -231,6 +233,7 @@ const PRESETS = {
     font:         "var(--font-handjet)",
     size:         5,
     lineHeight:   1.2,
+    rotateDeg:    0,
     weight:       '700',
     italic:       true,
     align:        'center',
@@ -243,6 +246,7 @@ const PRESETS = {
     font:         "var(--font-garamontio)",
     size:         5,
     lineHeight:   1.2,
+    rotateDeg:    0,
     weight:       '400',
     italic:       false,
     align:        'center',
@@ -1373,7 +1377,7 @@ class TextObject {
     this.type = 'text';
     this.xPct = xPct;   // center-x as fraction of container width
     this.yPct = yPct;   // center-y as fraction of container height
-    this.style = { lineHeight: 1.2, ...style };
+    this.style = { lineHeight: 1.2, rotateDeg: 0, ...style };
     this.text = '';
     this.autoContrastStep = 0;
     this.el = null;
@@ -1391,10 +1395,12 @@ class TextObject {
     del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>';
     del.title = 'Delete';
 
-    const drag = document.createElement('div');
-    drag.className = 'text-field-drag';
-    drag.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor" aria-hidden="true"><path d="M360-160q-33 0-56.5-23.5T280-240q0-33 23.5-56.5T360-320q33 0 56.5 23.5T440-240q0 33-23.5 56.5T360-160Zm240 0q-33 0-56.5-23.5T520-240q0-33 23.5-56.5T600-320q33 0 56.5 23.5T680-240q0 33-23.5 56.5T600-160ZM360-400q-33 0-56.5-23.5T280-480q0-33 23.5-56.5T360-560q33 0 56.5 23.5T440-480q0 33-23.5 56.5T360-400Zm240 0q-33 0-56.5-23.5T520-480q0-33 23.5-56.5T600-560q33 0 56.5 23.5T680-480q0 33-23.5 56.5T600-400ZM360-640q-33 0-56.5-23.5T280-720q0-33 23.5-56.5T360-800q33 0 56.5 23.5T440-720q0 33-23.5 56.5T360-640Zm240 0q-33 0-56.5-23.5T520-720q0-33 23.5-56.5T600-800q33 0 56.5 23.5T680-720q0 33-23.5 56.5T600-640Z"/></svg>';
-    drag.title = 'Move';
+    const rotate = document.createElement('button');
+    rotate.type = 'button';
+    rotate.className = 'text-field-rotate';
+    rotate.title = 'Rotate';
+    rotate.setAttribute('aria-label', 'Rotate object');
+    rotate.innerHTML = '<img src="icons/switch_access_shortcut_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg?v=3" alt="" aria-hidden="true" />';
 
     const inner = document.createElement('div');
     inner.className = 'text-field-inner';
@@ -1408,14 +1414,14 @@ class TextObject {
     inner.textContent = this.text;
 
     wrap.appendChild(del);
-    wrap.appendChild(drag);
+    wrap.appendChild(rotate);
     wrap.appendChild(inner);
     canvasContainer.appendChild(wrap);
 
     this.el = wrap;
     this.innerEl = inner;
     this.delEl = del;
-    this.dragEl = drag;
+    this.rotateEl = rotate;
 
     this._applyStyle();
     this._positionEl();
@@ -1467,7 +1473,11 @@ class TextObject {
     // Center the element on (x, y)
     this.el.style.left      = x + 'px';
     this.el.style.top       = y + 'px';
-    this.el.style.transform = 'translate(-50%, -50%)';
+    const deg = this.style.rotateDeg || 0;
+    this.el.style.setProperty('--object-rotate-deg', `${deg}deg`);
+    this.el.style.transform = Math.abs(deg) < 0.01
+      ? 'translate(-50%, -50%)'
+      : `translate(-50%, -50%) rotate(${deg}deg)`;
   }
 
   _attachEvents() {
@@ -1475,48 +1485,33 @@ class TextObject {
     // This fires whenever the user clicks or tabs into the contenteditable,
     // which is far more reliable than intercepting pointerdown ourselves.
     this.innerEl.addEventListener('focus', () => {
+      this.el.classList.add('editing');
       selectField(this);
     });
 
-    // MOBILE: intercept taps on the inner element so that a first tap only
-    // selects the field (no keyboard), and a second tap on an already-selected
-    // field allows focus through normally (keyboard appears).
-    // On desktop, let the browser handle focus natively with no intervention.
-    this.innerEl.addEventListener('pointerdown', (e) => {
-      if (!isMobile) return;
-      if (state.selectedObject !== this) {
-        e.preventDefault(); // blocks focus → no keyboard on first tap
-        selectField(this);
-      }
-      // already selected → fall through → browser focuses → keyboard appears
+    this.innerEl.addEventListener('blur', () => {
+      this.el.classList.remove('editing');
     });
 
-    // POINTER on wrapper: stop propagation to canvas listeners and forward
-    // focus to innerEl if the click landed on the wrapper border area.
-    // Dragging is handled exclusively by the drag handle.
+    // Direct-drag interaction: click+drag moves object; click on selected text enters edit mode.
     this.el.addEventListener('pointerdown', (e) => {
-      if (e.target === this.delEl || e.target === this.dragEl) return;
-      // Stop propagation so the canvas double-tap detector doesn't see this.
+      if (e.button !== 0 || e.target === this.delEl || e.target === this.rotateEl || this.rotateEl.contains(e.target)) return;
       e.stopPropagation();
+      if (document.activeElement === this.innerEl) return;
 
-      if (e.target !== this.innerEl) {
-        e.preventDefault();
-        // Mobile: only focus (open keyboard) if the field is already selected.
-        if (!isMobile || state.selectedObject === this) {
-          this.innerEl.focus();
-        } else {
-          selectField(this);
-        }
-      }
+      const focusOnClick = (e.target === this.innerEl && state.selectedObject === this && !isMobile);
+      e.preventDefault();
+      selectField(this);
+      startDrag(e, this, { focusOnClick });
     });
 
-    // Dedicated drag handle — preventDefault here is safe because this element
-    // is not a contenteditable, so it won't suppress focus elsewhere.
-    this.dragEl.addEventListener('pointerdown', (e) => {
+    this.rotateEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
       e.stopPropagation();
-      e.preventDefault(); // prevents text selection / ghost image on desktop
+      e.preventDefault();
       selectField(this);
-      startDrag(e, this);
+      startRotate(e, this);
+      clearPreset();
     });
 
     // Delete button
@@ -1681,9 +1676,14 @@ const GUIDE_POSITIONS = [1 / 3, 1 / 2, 2 / 3];
 // Hysteresis thresholds (as fraction of image dimension)
 const SNAP_IN  = 0.021; // snap when raw position comes within this distance
 const SNAP_OUT = 0.038; // unsnap when dragged this far past the guide
+const ROTATE_SNAP_GUIDES = [0, 90, 180, 270];
+const ROTATE_SNAP_IN_DEG = 4;
+const ROTATE_SNAP_OUT_DEG = 9;
 
 const guideVEls = []; // vertical lines (x positions)
 const guideHEls = []; // horizontal lines (y positions)
+let rotateGuideVEl = null;
+let rotateGuideHEl = null;
 
 function initGuides() {
   GUIDE_POSITIONS.forEach(p => {
@@ -1699,6 +1699,14 @@ function initGuides() {
     canvasContainer.appendChild(h);
     guideHEls.push(h);
   });
+
+  rotateGuideVEl = document.createElement('div');
+  rotateGuideVEl.className = 'guide guide-rotate guide-rotate-v';
+  canvasContainer.appendChild(rotateGuideVEl);
+
+  rotateGuideHEl = document.createElement('div');
+  rotateGuideHEl.className = 'guide guide-rotate guide-rotate-h';
+  canvasContainer.appendChild(rotateGuideHEl);
 }
 
 // Show or hide all guide lines, highlighting whichever axes are snapped.
@@ -1710,6 +1718,18 @@ function showGuides(visible, snapX = null, snapY = null) {
     guideVEls[i].classList.toggle('snapped', visible && snapX === p);
     guideHEls[i].classList.toggle('snapped', visible && snapY === p);
   });
+}
+
+function showRotateGuides(visible, centerXPct = 0.5, centerYPct = 0.5, snapAxis = null) {
+  if (!rotateGuideVEl || !rotateGuideHEl) return;
+  const left = `${centerXPct * 100}%`;
+  const top = `${centerYPct * 100}%`;
+  rotateGuideVEl.style.left = left;
+  rotateGuideHEl.style.top = top;
+  rotateGuideVEl.classList.toggle('visible', visible);
+  rotateGuideHEl.classList.toggle('visible', visible);
+  rotateGuideVEl.classList.toggle('snapped', visible && snapAxis === 'y');
+  rotateGuideHEl.classList.toggle('snapped', visible && snapAxis === 'x');
 }
 
 // Apply sticky snapping to one axis.
@@ -1731,9 +1751,52 @@ function snapAxis(raw, currentSnap) {
   return { pos: currentSnap !== null ? currentSnap : raw, snap: currentSnap };
 }
 
+function getNearestRotationGuide(rawDeg, targetDeg) {
+  const turns = Math.round((rawDeg - targetDeg) / 360);
+  return targetDeg + turns * 360;
+}
+
+function snapRotationDeg(rawDeg, currentSnapDeg) {
+  if (currentSnapDeg !== null && Math.abs(rawDeg - currentSnapDeg) > ROTATE_SNAP_OUT_DEG) {
+    currentSnapDeg = null;
+  }
+  if (currentSnapDeg === null) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const target of ROTATE_SNAP_GUIDES) {
+      const candidate = getNearestRotationGuide(rawDeg, target);
+      const dist = Math.abs(rawDeg - candidate);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
+      }
+    }
+    if (best !== null && bestDist <= ROTATE_SNAP_IN_DEG) {
+      currentSnapDeg = best;
+    }
+  }
+  return { deg: currentSnapDeg !== null ? currentSnapDeg : rawDeg, snap: currentSnapDeg };
+}
+
+function normalizeDeg0To360(deg) {
+  let v = deg % 360;
+  if (v < 0) v += 360;
+  return v;
+}
+
+function getRotationSnapAxis(snapDeg) {
+  if (snapDeg === null || snapDeg === undefined) return null;
+  const normalized = normalizeDeg0To360(snapDeg);
+  if (normalized < 45 || normalized >= 315 || (normalized >= 135 && normalized < 225)) {
+    return 'x'; // 0 or 180 -> horizontal axis highlight
+  }
+  return 'y'; // 90 or 270 -> vertical axis highlight
+}
+
 // ─── Drag to move ─────────────────────────────────────────────────────────────
 
-function startDrag(e, tf) {
+function startDrag(e, tf, opts = {}) {
+  const focusOnClick = !!opts.focusOnClick;
   const startX   = e.clientX;
   const startY   = e.clientY;
   const origXPct = tf.xPct;
@@ -1749,6 +1812,7 @@ function startDrag(e, tf) {
     const dx = ev.clientX - startX;
     const dy = ev.clientY - startY;
     if (!dragging && Math.sqrt(dx * dx + dy * dy) < DRAG_THRESH) return;
+    if (!dragging) tf.el.classList.add('dragging');
     // Prevent the page from scrolling while the user is dragging a field.
     // Only called after the threshold so accidental touches still scroll normally.
     ev.preventDefault();
@@ -1770,11 +1834,15 @@ function startDrag(e, tf) {
   function onUp() {
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
     showGuides(false);
     snapX = null;
     snapY = null;
+    tf.el.classList.remove('dragging');
     if (dragging) {
       tf.innerEl.blur();
+    } else if (focusOnClick) {
+      tf.innerEl.focus();
     }
   }
 
@@ -1782,6 +1850,49 @@ function startDrag(e, tf) {
   // browsers mark touch listeners passive by default which blocks preventDefault.
   window.addEventListener('pointermove', onMove, { passive: false });
   window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+}
+
+function startRotate(e, tf) {
+  const rect = canvasContainer.getBoundingClientRect();
+  const centerX = rect.left + tf.xPct * canvasContainer.offsetWidth;
+  const centerY = rect.top + tf.yPct * canvasContainer.offsetHeight;
+  const origDeg = tf.style.rotateDeg || 0;
+  const startAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
+  tf.el.classList.add('rotating');
+  let snapDeg = null;
+  showRotateGuides(true, tf.xPct, tf.yPct, null);
+
+  const angleDeltaDeg = (from, to) => {
+    let d = to - from;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return d * (180 / Math.PI);
+  };
+
+  function onMove(ev) {
+    ev.preventDefault();
+    const angle = Math.atan2(ev.clientY - centerY, ev.clientX - centerX);
+    const deltaDeg = angleDeltaDeg(startAngle, angle);
+    const rawDeg = origDeg + deltaDeg;
+    ({ deg: tf.style.rotateDeg, snap: snapDeg } = snapRotationDeg(rawDeg, snapDeg));
+    tf.reposition();
+    tf.rotateEl.classList.toggle('snapped', snapDeg !== null);
+    showRotateGuides(true, tf.xPct, tf.yPct, getRotationSnapAxis(snapDeg));
+  }
+
+  function onUp() {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    tf.el.classList.remove('rotating');
+    tf.rotateEl.classList.remove('snapped');
+    showRotateGuides(false);
+  }
+
+  window.addEventListener('pointermove', onMove, { passive: false });
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
 }
 
 // ─── Panel / controls ─────────────────────────────────────────────────────────
@@ -2367,24 +2478,55 @@ function drawPreviewTextLayers(ctx, w, h) {
     tc.textAlign = s.align;
     tc.textBaseline = 'middle';
     const previewBlur = getObjectBlurRadiusPx(s.blur, previewScale);
-    if (s.bgColor) {
-      const bgW = tf.innerEl.offsetWidth * sx;
-      const bgH = tf.innerEl.offsetHeight * sy;
-      tc.fillStyle = s.bgColor;
-      tc.fillRect(cx - bgW / 2, cy - bgH / 2, bgW, bgH);
-    }
-
-    lines.forEach((line, i) => {
-      const ly = startY + i * lineHeight;
-      if (s.outlineWidth > 0) {
-        tc.lineWidth = s.outlineWidth;
-        tc.strokeStyle = s.outlineColor;
-        tc.lineJoin = 'round';
-        tc.strokeText(line, lx, ly);
+    const rotDeg = s.rotateDeg || 0;
+    if (Math.abs(rotDeg) < 0.01) {
+      if (s.bgColor) {
+        const bgW = tf.innerEl.offsetWidth * sx;
+        const bgH = tf.innerEl.offsetHeight * sy;
+        tc.fillStyle = s.bgColor;
+        tc.fillRect(cx - bgW / 2, cy - bgH / 2, bgW, bgH);
       }
-      tc.fillStyle = s.fgColor;
-      tc.fillText(line, lx, ly);
-    });
+
+      lines.forEach((line, i) => {
+        const ly = startY + i * lineHeight;
+        if (s.outlineWidth > 0) {
+          tc.lineWidth = s.outlineWidth;
+          tc.strokeStyle = s.outlineColor;
+          tc.lineJoin = 'round';
+          tc.strokeText(line, lx, ly);
+        }
+        tc.fillStyle = s.fgColor;
+        tc.fillText(line, lx, ly);
+      });
+    } else {
+      const rotRad = rotDeg * Math.PI / 180;
+      const localStartY = -totalH / 2 + lineHeight / 2;
+      const localHalfW = (tf.innerEl.offsetWidth * sx) / 2;
+      const localX = s.align === 'left'  ? -localHalfW :
+                     s.align === 'right' ? localHalfW :
+                     0;
+      tc.save();
+      tc.translate(cx, cy);
+      tc.rotate(rotRad);
+      if (s.bgColor) {
+        const bgW = tf.innerEl.offsetWidth * sx;
+        const bgH = tf.innerEl.offsetHeight * sy;
+        tc.fillStyle = s.bgColor;
+        tc.fillRect(-bgW / 2, -bgH / 2, bgW, bgH);
+      }
+      lines.forEach((line, i) => {
+        const ly = localStartY + i * lineHeight;
+        if (s.outlineWidth > 0) {
+          tc.lineWidth = s.outlineWidth;
+          tc.strokeStyle = s.outlineColor;
+          tc.lineJoin = 'round';
+          tc.strokeText(line, localX, ly);
+        }
+        tc.fillStyle = s.fgColor;
+        tc.fillText(line, localX, ly);
+      });
+      tc.restore();
+    }
     if (previewBlur > 0) softBlur(tc, w, h, previewBlur);
     ctx.drawImage(tempCanvas, 0, 0);
   }
@@ -3185,6 +3327,7 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
     const lineHeight = fontSize * (s.lineHeight ?? 1.2);
     const totalH = lines.length * lineHeight;
     const startY = cy - totalH / 2 + lineHeight / 2;
+    const rotDeg = s.rotateDeg || 0;
 
     // For left/right alignment, offset x so the text block stays centered on cx
     const elHalfW = (tf.innerEl.offsetWidth * scale) / 2;
@@ -3197,26 +3340,58 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
     tc.font         = ctx.font;
     tc.textAlign    = s.align;
     tc.textBaseline = 'middle';
-    if (s.bgColor) {
-      const bgW = tf.innerEl.offsetWidth * scale;
-      const bgH = tf.innerEl.offsetHeight * scale;
-      tc.fillStyle = s.bgColor;
-      tc.fillRect(cx - bgW / 2, cy - bgH / 2, bgW, bgH);
-    }
-
-    lines.forEach((line, i) => {
-      const ly = startY + i * lineHeight;
-
-      if (s.outlineWidth > 0) {
-        tc.lineWidth   = s.outlineWidth * scale;
-        tc.strokeStyle = s.outlineColor;
-        tc.lineJoin    = 'round';
-        tc.strokeText(line, lx, ly);
+    if (Math.abs(rotDeg) < 0.01) {
+      if (s.bgColor) {
+        const bgW = tf.innerEl.offsetWidth * scale;
+        const bgH = tf.innerEl.offsetHeight * scale;
+        tc.fillStyle = s.bgColor;
+        tc.fillRect(cx - bgW / 2, cy - bgH / 2, bgW, bgH);
       }
 
-      tc.fillStyle = s.fgColor;
-      tc.fillText(line, lx, ly);
-    });
+      lines.forEach((line, i) => {
+        const ly = startY + i * lineHeight;
+
+        if (s.outlineWidth > 0) {
+          tc.lineWidth   = s.outlineWidth * scale;
+          tc.strokeStyle = s.outlineColor;
+          tc.lineJoin    = 'round';
+          tc.strokeText(line, lx, ly);
+        }
+
+        tc.fillStyle = s.fgColor;
+        tc.fillText(line, lx, ly);
+      });
+    } else {
+      const rotRad = rotDeg * Math.PI / 180;
+      const localStartY = -totalH / 2 + lineHeight / 2;
+      const localHalfW = (tf.innerEl.offsetWidth * scale) / 2;
+      const localX = s.align === 'left'  ? -localHalfW :
+                     s.align === 'right' ? localHalfW :
+                     0;
+      tc.save();
+      tc.translate(cx, cy);
+      tc.rotate(rotRad);
+      if (s.bgColor) {
+        const bgW = tf.innerEl.offsetWidth * scale;
+        const bgH = tf.innerEl.offsetHeight * scale;
+        tc.fillStyle = s.bgColor;
+        tc.fillRect(-bgW / 2, -bgH / 2, bgW, bgH);
+      }
+      lines.forEach((line, i) => {
+        const ly = localStartY + i * lineHeight;
+
+        if (s.outlineWidth > 0) {
+          tc.lineWidth   = s.outlineWidth * scale;
+          tc.strokeStyle = s.outlineColor;
+          tc.lineJoin    = 'round';
+          tc.strokeText(line, localX, ly);
+        }
+
+        tc.fillStyle = s.fgColor;
+        tc.fillText(line, localX, ly);
+      });
+      tc.restore();
+    }
 
     if (s.blur > 0) {
       softBlur(tc, nw, nh, getObjectBlurRadiusPx(s.blur, scale));
