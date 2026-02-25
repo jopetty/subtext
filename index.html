@@ -107,11 +107,13 @@
 
         <!-- Presets -->
         <div class="controls-row controls-row--presets">
-          <div class="preset-pills">
-            <button class="preset-btn active" data-preset="classic">Classic</button>
-            <button class="preset-btn" data-preset="cinema">Cin&eacute;ma</button>
-            <button class="preset-btn" data-preset="vaporwave">Vaporwave</button>
-            <button class="preset-btn" data-preset="darkAcademia">Dark Academia</button>
+          <div class="chip-scroller preset-chips">
+            <div class="chip-track preset-chips-track">
+              <button class="control-chip preset-chip active" data-preset="classic">Classic</button>
+              <button class="control-chip preset-chip" data-preset="cinema">Cin&eacute;ma</button>
+              <button class="control-chip preset-chip" data-preset="vaporwave">Vaporwave</button>
+              <button class="control-chip preset-chip" data-preset="darkAcademia">Dark Academia</button>
+            </div>
           </div>
         </div>
 
@@ -290,17 +292,19 @@
         <div class="section-heading-row">
           <span class="control-label section-heading">Vibe</span>
         </div>
-        <div class="controls-row controls-row--filter-chips">
-          <div class="filter-chips">
-            <button class="filter-chip active" data-filter="none">None</button>
-            <button class="filter-chip" data-filter="film">35mm</button>
-            <button class="filter-chip" data-filter="noir">Noir</button>
-            <button class="filter-chip" data-filter="twilight">Twilight</button>
-            <button class="filter-chip hidden" data-filter="mexico" aria-hidden="true" tabindex="-1">Mexico</button>
-            <button class="filter-chip" data-filter="darkAcademia">Dark Academia</button>
-            <button class="filter-chip" data-filter="vaporwave">Vaporwave</button>
-            <button class="filter-chip" data-filter="solarpunk">Solarpunk</button>
-            <button class="filter-chip" data-filter="hegseth">Hegseth</button>
+        <div class="controls-row controls-row--vibe-chips">
+          <div class="chip-scroller vibe-chips">
+            <div class="chip-track vibe-chips-track">
+              <button class="control-chip vibe-chip active" data-filter="none">None</button>
+              <button class="control-chip vibe-chip" data-filter="film">35mm</button>
+              <button class="control-chip vibe-chip" data-filter="noir">Noir</button>
+              <button class="control-chip vibe-chip" data-filter="twilight">Twilight</button>
+              <button class="control-chip vibe-chip hidden" data-filter="mexico" aria-hidden="true" tabindex="-1">Mexico</button>
+              <button class="control-chip vibe-chip" data-filter="darkAcademia">Dark Academia</button>
+              <button class="control-chip vibe-chip" data-filter="vaporwave">Vaporwave</button>
+              <button class="control-chip vibe-chip" data-filter="solarpunk">Solarpunk</button>
+              <button class="control-chip vibe-chip" data-filter="hegseth">Hegseth</button>
+            </div>
           </div>
         </div>
         <div id="filter-layer-row" class="controls-row hidden">
