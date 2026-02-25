@@ -473,7 +473,7 @@ html, body {
 }
 
 /* Match preset-pill hover behavior across button controls. */
-:where(.icon-btn, .top-action-btn, .font-select-trigger, .style-btn, .align-btn, .text-action-btn, .filter-chip, .preset-btn):hover:not(.active):not(:disabled) {
+:where(.icon-btn, .top-action-btn, .font-select-trigger, .style-btn, .align-btn, .filter-chip, .preset-btn):hover:not(.active):not(:disabled) {
   border-color: var(--ink-muted);
 }
 
@@ -992,6 +992,7 @@ html, body {
 }
 
 #ctrl-size-val,
+#ctrl-line-height-val,
 #ctrl-outline-width-val {
   display: none;
 }
@@ -1010,42 +1011,36 @@ html, body {
   align-items: flex-end;
 }
 
+.cycle-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin-bottom: 5px;
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+}
+
+.cycle-btn img {
+  width: 16px;
+  height: 16px;
+  display: block;
+  opacity: 0.85;
+}
+
+.cycle-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.cycle-btn:hover {
+  background: transparent;
+}
+
 .control-group--stroke,
 .control-group--focus {
   flex: 1;
   min-width: 0;
-}
-
-.controls-row--text-action {
-  margin-top: 0.1rem;
-}
-
-.text-action-btn {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: 0.78rem;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  height: 34px;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-}
-
-.text-action-btn:hover {
-  border-color: var(--ink-muted);
-}
-
-.text-action-btn:active {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg) 86%);
-}
-
-.text-action-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
 
 /* ── Form elements ── */

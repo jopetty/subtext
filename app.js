@@ -206,6 +206,7 @@ const PRESETS = {
   classic: {
     font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
+    lineHeight:   1.2,
     weight:       '400',
     italic:       false,
     align:        'center',
@@ -217,6 +218,7 @@ const PRESETS = {
   cinema: {
     font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
+    lineHeight:   1.2,
     weight:       '400',
     italic:       true,
     align:        'center',
@@ -228,6 +230,7 @@ const PRESETS = {
   vaporwave: {
     font:         "var(--font-handjet)",
     size:         5,
+    lineHeight:   1.2,
     weight:       '700',
     italic:       true,
     align:        'center',
@@ -239,6 +242,7 @@ const PRESETS = {
   darkAcademia: {
     font:         "var(--font-garamontio)",
     size:         5,
+    lineHeight:   1.2,
     weight:       '400',
     italic:       false,
     align:        'center',
@@ -903,6 +907,8 @@ const ctrlFontLabel    = document.getElementById('ctrl-font-label');
 const ctrlFontMenu     = document.getElementById('ctrl-font-menu');
 const ctrlSize         = document.getElementById('ctrl-size');
 const ctrlSizeVal      = document.getElementById('ctrl-size-val');
+const ctrlLineHeight   = document.getElementById('ctrl-line-height');
+const ctrlLineHeightVal = document.getElementById('ctrl-line-height-val');
 const ctrlBold         = document.getElementById('ctrl-bold');
 const ctrlItalic       = document.getElementById('ctrl-italic');
 const ctrlBlur         = document.getElementById('ctrl-blur');
@@ -1367,7 +1373,7 @@ class TextObject {
     this.type = 'text';
     this.xPct = xPct;   // center-x as fraction of container width
     this.yPct = yPct;   // center-y as fraction of container height
-    this.style = { ...style };
+    this.style = { lineHeight: 1.2, ...style };
     this.text = '';
     this.autoContrastStep = 0;
     this.el = null;
@@ -1429,6 +1435,7 @@ class TextObject {
 
     inner.style.fontFamily    = s.font;
     inner.style.fontSize      = px + 'px';
+    inner.style.lineHeight    = String(s.lineHeight ?? 1.2);
     inner.style.fontWeight    = s.weight;
     inner.style.fontStyle     = s.italic ? 'italic' : 'normal';
     inner.style.textAlign     = s.align;
@@ -1789,7 +1796,7 @@ function updatePanel() {
   if (ctrlAutoContrast) {
     ctrlAutoContrast.disabled = !selectedText;
     ctrlAutoContrast.title = selectedText
-      ? 'Automatically optimize text contrast for the selected field'
+      ? 'Cycle auto-contrast colors for the selected text field'
       : 'Select a text field first';
   }
 }
@@ -1808,6 +1815,8 @@ function syncTextControlsToStyle(s, activePreset) {
   syncFontSelectDisplay();
   ctrlSize.value                  = s.size;
   ctrlSizeVal.textContent         = s.size + '%';
+  ctrlLineHeight.value            = s.lineHeight ?? 1.2;
+  ctrlLineHeightVal.textContent   = (s.lineHeight ?? 1.2).toFixed(2);
   ctrlBold.classList.toggle('active', parseInt(s.weight) >= 700);
   ctrlItalic.classList.toggle('active', s.italic);
   ctrlFgColor.value               = s.fgColor;
@@ -2179,6 +2188,13 @@ ctrlSize.addEventListener('input', () => {
   clearPreset();
 });
 
+ctrlLineHeight.addEventListener('input', () => {
+  const v = parseFloat(ctrlLineHeight.value);
+  ctrlLineHeightVal.textContent = v.toFixed(2);
+  applyControlsToSelected({ lineHeight: v });
+  clearPreset();
+});
+
 ctrlBold.addEventListener('click', () => {
   const isNowBold = !ctrlBold.classList.contains('active');
   ctrlBold.classList.toggle('active', isNowBold);
@@ -2337,7 +2353,7 @@ function drawPreviewTextLayers(ctx, w, h) {
     const cy = (tf.yPct * canvasContainer.offsetHeight - imgOffsetY) * sy;
     const fontSize = s.size / 100 * w;
     const lines = tf.innerEl.innerText.split('\n');
-    const lineHeight = fontSize * 1.2;
+    const lineHeight = fontSize * (s.lineHeight ?? 1.2);
     const totalH = lines.length * lineHeight;
     const startY = cy - totalH / 2 + lineHeight / 2;
     const elHalfW = (tf.innerEl.offsetWidth * sx) / 2;
@@ -3166,7 +3182,7 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
     ctx.textBaseline = 'middle';
 
     const lines = tf.innerEl.innerText.split('\n');
-    const lineHeight = fontSize * 1.2;
+    const lineHeight = fontSize * (s.lineHeight ?? 1.2);
     const totalH = lines.length * lineHeight;
     const startY = cy - totalH / 2 + lineHeight / 2;
 

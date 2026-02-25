@@ -164,14 +164,14 @@
           </div>
         </div>
 
-        <!-- Size + Align -->
+        <!-- Line Height + Align -->
         <div class="controls-row controls-row--size-align">
           <div class="control-group control-group--size">
             <div class="row-header">
-              <span class="control-label">Size</span>
-              <span id="ctrl-size-val">5%</span>
+              <span class="control-label">Line Height</span>
+              <span id="ctrl-line-height-val">1.2</span>
             </div>
-            <input type="range" id="ctrl-size" min="1" max="25" step="0.5" value="5" />
+            <input type="range" id="ctrl-line-height" min="0.8" max="2" step="0.05" value="1.2" />
           </div>
           <div class="control-group control-group--align">
             <span class="control-label">Alignment</span>
@@ -198,6 +198,15 @@
         <!-- Colors + Stroke -->
         <div class="controls-row controls-row--colors">
           <div class="colors-left">
+            <button
+              id="ctrl-auto-contrast"
+              type="button"
+              class="icon-btn cycle-btn"
+              title="Cycle auto-contrast colors"
+              aria-label="Cycle auto-contrast colors"
+            >
+              <img src="icons/cycle_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="" aria-hidden="true" />
+            </button>
             <div class="control-group">
               <span class="control-label">Text</span>
               <input type="color" id="ctrl-fg-color" value="#ffffff" />
@@ -214,10 +223,6 @@
             </div>
             <input type="range" id="ctrl-outline-width" min="0" max="20" step="0.5" value="2" />
           </div>
-        </div>
-
-        <div class="controls-row controls-row--text-action">
-          <button id="ctrl-auto-contrast" type="button" class="text-action-btn">Auto Contrast</button>
         </div>
 
       </div>
@@ -243,6 +248,15 @@
           <div class="control-group control-group--size">
             <span class="control-label">Blur</span>
             <input type="range" id="ctrl-blur" min="0" max="1" step="0.05" value="0" />
+          </div>
+        </div>
+        <div class="controls-row">
+          <div class="control-group control-group--size">
+            <div class="row-header">
+              <span class="control-label">Size</span>
+              <span id="ctrl-size-val">5%</span>
+            </div>
+            <input type="range" id="ctrl-size" min="1" max="25" step="0.5" value="5" />
           </div>
         </div>
       </div>
