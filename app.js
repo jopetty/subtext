@@ -4173,6 +4173,10 @@ let _copyKeyTapCount = 0;
 let _copyKeyTimer = 0;
 let _backKeyTapCount = 0;
 let _backKeyTimer = 0;
+let _addObjectKeyTapCount = 0;
+let _addObjectKeyTimer = 0;
+let _uploadKeyTapCount = 0;
+let _uploadKeyTimer = 0;
 let _devKeyTapCount = 0;
 let _devKeyTimer = 0;
 const ACTION_KEY_DBL_TAP_MS = 800;
@@ -4247,7 +4251,7 @@ window.addEventListener('keydown', async (e) => {
   if (!editorScreen.classList.contains('active')) return;
   if (!state.imageLoaded) return;
   const k = e.key.toLowerCase();
-  if (k !== 's' && k !== 'c' && k !== 'n') return;
+  if (k !== 's' && k !== 'c' && k !== 'n' && k !== 'o') return;
   if (k === 'c' && !state.copyActionAvailable) return;
 
   const active = document.activeElement;
@@ -4255,9 +4259,11 @@ window.addEventListener('keydown', async (e) => {
     _saveKeyTapCount = 0;
     _copyKeyTapCount = 0;
     _backKeyTapCount = 0;
+    _addObjectKeyTapCount = 0;
     if (_saveKeyTimer) { clearTimeout(_saveKeyTimer); _saveKeyTimer = 0; }
     if (_copyKeyTimer) { clearTimeout(_copyKeyTimer); _copyKeyTimer = 0; }
     if (_backKeyTimer) { clearTimeout(_backKeyTimer); _backKeyTimer = 0; }
+    if (_addObjectKeyTimer) { clearTimeout(_addObjectKeyTimer); _addObjectKeyTimer = 0; }
     return;
   }
 
@@ -4301,6 +4307,27 @@ window.addEventListener('keydown', async (e) => {
     return;
   }
 
+  if (k === 'o') {
+    _addObjectKeyTapCount += 1;
+    if (_addObjectKeyTapCount < 2) {
+      if (_addObjectKeyTimer) clearTimeout(_addObjectKeyTimer);
+      _addObjectKeyTimer = setTimeout(() => {
+        _addObjectKeyTapCount = 0;
+        _addObjectKeyTimer = 0;
+      }, ACTION_KEY_DBL_TAP_MS);
+      return;
+    }
+    _addObjectKeyTapCount = 0;
+    if (_addObjectKeyTimer) {
+      clearTimeout(_addObjectKeyTimer);
+      _addObjectKeyTimer = 0;
+    }
+    if (state.uploadBusy) return;
+    e.preventDefault();
+    addObjectInput?.click();
+    return;
+  }
+
   _copyKeyTapCount += 1;
   if (_copyKeyTapCount < 2) {
     if (_copyKeyTimer) clearTimeout(_copyKeyTimer);
@@ -4317,6 +4344,31 @@ window.addEventListener('keydown', async (e) => {
   }
   e.preventDefault();
   await handleCopyAction();
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!uploadScreen.classList.contains('active')) return;
+  if (state.uploadBusy) return;
+  if (e.key.toLowerCase() !== 'n') return;
+
+  _uploadKeyTapCount += 1;
+  if (_uploadKeyTapCount < 2) {
+    if (_uploadKeyTimer) clearTimeout(_uploadKeyTimer);
+    _uploadKeyTimer = setTimeout(() => {
+      _uploadKeyTapCount = 0;
+      _uploadKeyTimer = 0;
+    }, ACTION_KEY_DBL_TAP_MS);
+    return;
+  }
+
+  _uploadKeyTapCount = 0;
+  if (_uploadKeyTimer) {
+    clearTimeout(_uploadKeyTimer);
+    _uploadKeyTimer = 0;
+  }
+  e.preventDefault();
+  fileInput?.click();
 });
 
 window.addEventListener('keydown', (e) => {
