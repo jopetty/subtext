@@ -1,6 +1,13 @@
 .claude/
 test_data/
 .DS_Store
+node_modules/
+playwright-report/
+test-results/
+coverage/
+__pycache__/
+*.pyc
+dist-pages/
 
 # LUT trainer generated images
 lut_trainer/**/*.jpg

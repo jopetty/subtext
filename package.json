@@ -1,0 +1,16 @@
+{
+  "name": "subtext",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:unit && npm run test:e2e && npm run test:py",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test:py": "uv run --with pytest pytest tests/python -q"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "vitest": "^2.1.8"
+  }
+}
