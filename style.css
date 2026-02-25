@@ -161,6 +161,63 @@
   font-display: swap;
 }
 
+/* ── Added display fonts ── */
+@font-face {
+  font-family: 'Jabin';
+  src: url('fonts/jabin-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jabin';
+  src: url('fonts/jabin-medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jabin';
+  src: url('fonts/jabin-bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ManufacturingConsent';
+  src: url('fonts/manufacturing-consent-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VCROSDMono';
+  src: url('fonts/vcr-osd-mono-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Canterbury';
+  src: url('fonts/canterbury-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'OldEnglishFive';
+  src: url('fonts/old-english-five-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -192,6 +249,11 @@
   --font-impact: Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif;
   --font-courier: 'Courier New', Courier, monospace;
   --font-coral-pixels: 'CoralPixels', sans-serif;
+  --font-jabin: 'Jabin', serif;
+  --font-manufacturing-consent: 'ManufacturingConsent', sans-serif;
+  --font-vcr-osd-mono: 'VCROSDMono', monospace;
+  --font-canterbury: 'Canterbury', serif;
+  --font-old-english-five: 'OldEnglishFive', serif;
   --font-handjet: 'Handjet', sans-serif;
   --font-press-start: 'PressStart2P', monospace;
   --font-silkscreen: 'Silkscreen', monospace;
