@@ -280,6 +280,19 @@ const TWILIGHT_POLY_COEFS = [
   [0.12329674, 0.62832433, -0.23901433],
 ];
 
+const MEXICO_COEFS = [
+  [-0.07086585, -0.00842946,  0.05177793],
+  [ 2.62209105, -0.02575670, -0.16334338],
+  [-0.03539947,  0.49390715, -0.02859681],
+  [-0.06194337,  0.07698684, -0.37386778],
+  [-1.17756331, -0.50214225,  0.36419725],
+  [-1.18718219,  1.39672267, -0.53655916],
+  [ 0.28874910, -0.36011073,  0.09994905],
+  [ 0.95353884, -0.27611768,  0.52998900],
+  [-0.38004848,  0.38436118, -0.40951315],
+  [ 0.03741731, -0.13591971,  1.07161438],
+];
+
 // Each vibe has:
 //   cssPreview(t)         → optional CSS approximation (debug/reference only)
 //   apply(data, w, h, t)  → pixel-level function used during canvas export
@@ -355,29 +368,23 @@ const FILTERS = {
     apply(data, w, h, t) {
       const blend = Math.max(0, Math.min(1, t));
       const invBlend = 1 - blend;
-      const rp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
-      const gp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
-      const bp = new Float32Array(TWILIGHT_POLY_MAX_DEG + 1);
+      const C = TWILIGHT_POLY_COEFS;
       for (let i = 0; i < data.length; i += 4) {
         const sr = data[i] / 255;
         const sg = data[i + 1] / 255;
         const sb = data[i + 2] / 255;
-        rp[0] = 1; gp[0] = 1; bp[0] = 1;
-        for (let d = 1; d <= TWILIGHT_POLY_MAX_DEG; d++) {
-          rp[d] = rp[d - 1] * sr;
-          gp[d] = gp[d - 1] * sg;
-          bp[d] = bp[d - 1] * sb;
-        }
-        let tr = 0;
-        let tg = 0;
-        let tb = 0;
-        for (let k = 0; k < TWILIGHT_POLY_EXPS.length; k++) {
-          const ex = TWILIGHT_POLY_EXPS[k];
-          const v = rp[ex[0]] * gp[ex[1]] * bp[ex[2]];
-          tr += v * TWILIGHT_POLY_COEFS[k][0];
-          tg += v * TWILIGHT_POLY_COEFS[k][1];
-          tb += v * TWILIGHT_POLY_COEFS[k][2];
-        }
+        const rr = sr * sr;
+        const gg = sg * sg;
+        const bb = sb * sb;
+        const rg = sr * sg;
+        const rb = sr * sb;
+        const gb = sg * sb;
+        let tr = C[0][0];
+        let tg = C[0][1];
+        let tb = C[0][2];
+        tr += sr * C[1][0] + sg * C[2][0] + sb * C[3][0] + rr * C[4][0] + rg * C[5][0] + rb * C[6][0] + gg * C[7][0] + gb * C[8][0] + bb * C[9][0];
+        tg += sr * C[1][1] + sg * C[2][1] + sb * C[3][1] + rr * C[4][1] + rg * C[5][1] + rb * C[6][1] + gg * C[7][1] + gb * C[8][1] + bb * C[9][1];
+        tb += sr * C[1][2] + sg * C[2][2] + sb * C[3][2] + rr * C[4][2] + rg * C[5][2] + rb * C[6][2] + gg * C[7][2] + gb * C[8][2] + bb * C[9][2];
 
         tr = tr < 0 ? 0 : tr > 1 ? 1 : tr;
         tg = tg < 0 ? 0 : tg > 1 ? 1 : tg;
@@ -394,22 +401,7 @@ const FILTERS = {
     cssPreview: (t) =>
       `sepia(${0.8*t}) saturate(${1 + 0.2*t}) hue-rotate(${-20*t}deg) brightness(${1 - 0.1*t}) contrast(1)`,
     apply(data, w, h, t) {
-      // Polynomial LUT-like transform (low complexity, degree 2) trained via
-      // lut_trainer/create_lut.py from paired Mexico grade examples.
-      // Features: [1, r, g, b, r^2, rg, rb, g^2, gb, b^2]
-      // Output is blended with source by intensity t so the slider remains smooth.
-      const C = [
-        [-0.07086585, -0.00842946,  0.05177793],
-        [ 2.62209105, -0.02575670, -0.16334338],
-        [-0.03539947,  0.49390715, -0.02859681],
-        [-0.06194337,  0.07698684, -0.37386778],
-        [-1.17756331, -0.50214225,  0.36419725],
-        [-1.18718219,  1.39672267, -0.53655916],
-        [ 0.28874910, -0.36011073,  0.09994905],
-        [ 0.95353884, -0.27611768,  0.52998900],
-        [-0.38004848,  0.38436118, -0.40951315],
-        [ 0.03741731, -0.13591971,  1.07161438],
-      ];
+      const C = MEXICO_COEFS;
       const blend = Math.max(0, Math.min(1, t));
       const invBlend = 1 - blend;
 
@@ -618,6 +610,28 @@ const FILTERS = {
       const localScratch = scratch || getFilterScratch('hegseth', data.length);
       const orig = localScratch.orig;
       orig.set(data);
+      if (!localScratch.xm1 || localScratch.xm1.length !== w) {
+        localScratch.xm1 = new Int32Array(w);
+        localScratch.xp1 = new Int32Array(w);
+        localScratch.xByte = new Int32Array(w);
+        localScratch.g1x = new Int32Array(w);
+        localScratch.g2x = new Int32Array(w);
+        for (let x = 0; x < w; x++) {
+          localScratch.xm1[x] = x > 0 ? x - 1 : 0;
+          localScratch.xp1[x] = x < w - 1 ? x + 1 : w - 1;
+          localScratch.xByte[x] = x * 4;
+        }
+      }
+      if (!localScratch.sinRow ||
+          localScratch.sinRow.length !== h ||
+          localScratch.lastWobbleScale !== pixelScale) {
+        localScratch.sinRow = new Float32Array(h);
+        const wobbleScaleForCache = Math.max(0.0001, pixelScale);
+        for (let y = 0; y < h; y++) {
+          localScratch.sinRow[y] = Math.sin((y / wobbleScaleForCache) * 0.08);
+        }
+        localScratch.lastWobbleScale = pixelScale;
+      }
       const angleDeg = params.angle ?? 0;
       const ghostDistanceT = (params.ghostDistance ?? 50) / 100;
       const angleRad = angleDeg * Math.PI / 180;
@@ -633,12 +647,15 @@ const FILTERS = {
       const dy1 = Math.round(dirY * shift1);
       const dy2 = Math.round(dirY * shift2);
       const wobbleAmp = 2.3 * t * pixelScale;
-      const wobbleScale = Math.max(0.0001, pixelScale);
+      const xm1 = localScratch.xm1;
+      const xp1 = localScratch.xp1;
+      const xByte = localScratch.xByte;
+      const g1x = localScratch.g1x;
+      const g2x = localScratch.g2x;
+      const sinRow = localScratch.sinRow;
 
       for (let y = 0; y < h; y++) {
-        // Anchor wobble frequency to display-space rows so preview/export match
-        // even when they run on different pixel grids.
-        const wobble = Math.round(Math.sin((y / wobbleScale) * 0.08) * wobbleAmp);
+        const wobble = Math.round(sinRow[y] * wobbleAmp);
         const yBase = y * w * 4;
         const g1y = y + dy1 < 0 ? 0 : y + dy1 >= h ? h - 1 : y + dy1;
         const g2y = y - dy2 < 0 ? 0 : y - dy2 >= h ? h - 1 : y - dy2;
@@ -646,21 +663,28 @@ const FILTERS = {
         const g2BaseY = g2y * w * 4;
         const dx1 = Math.round(dirX * shift1) + wobble;
         const dx2 = Math.round(dirX * shift2) + Math.round(wobble * 0.5);
+        for (let x = 0; x < w; x++) {
+          const gx1 = x + dx1;
+          g1x[x] = gx1 < 0 ? 0 : gx1 >= w ? w - 1 : gx1;
+          const gx2 = x - dx2;
+          g2x[x] = gx2 < 0 ? 0 : gx2 >= w ? w - 1 : gx2;
+        }
 
         for (let x = 0; x < w; x++) {
-          const xm1 = x > 0 ? x - 1 : 0;
-          const xp1 = x < w - 1 ? x + 1 : w - 1;
-          const g1x = x + dx1 < 0 ? 0 : x + dx1 >= w ? w - 1 : x + dx1;
-          const g1x1 = g1x < w - 1 ? g1x + 1 : w - 1;
-          const g2x = x - dx2 < 0 ? 0 : x - dx2 >= w ? w - 1 : x - dx2;
-          const g2x1 = g2x > 0 ? g2x - 1 : 0;
-          const i = yBase + x * 4;
+          const xB = xByte[x];
+          const i = yBase + xB;
+          const baseM1 = yBase + xByte[xm1[x]];
+          const baseP1 = yBase + xByte[xp1[x]];
+          const g1Base = g1BaseY + xByte[g1x[x]];
+          const g1BaseN = g1BaseY + xByte[g1x[x] < w - 1 ? g1x[x] + 1 : w - 1];
+          const g2Base = g2BaseY + xByte[g2x[x]];
+          const g2BaseN = g2BaseY + xByte[g2x[x] > 0 ? g2x[x] - 1 : 0];
 
           for (let c = 0; c < 3; c++) {
             // In-place smear + two directional ghost copies.
-            const base = (orig[yBase + xm1 * 4 + c] + orig[yBase + x * 4 + c] + orig[yBase + xp1 * 4 + c]) / 3;
-            const g1 = (orig[g1BaseY + g1x * 4 + c] + orig[g1BaseY + g1x1 * 4 + c]) / 2;
-            const g2 = (orig[g2BaseY + g2x * 4 + c] + orig[g2BaseY + g2x1 * 4 + c]) / 2;
+            const base = (orig[baseM1 + c] + orig[i + c] + orig[baseP1 + c]) / 3;
+            const g1 = (orig[g1Base + c] + orig[g1BaseN + c]) / 2;
+            const g2 = (orig[g2Base + c] + orig[g2BaseN + c]) / 2;
             data[i + c] = clamp255((base * mainW + g1 * g1W + g2 * g2W) * invWSum);
           }
         }
@@ -705,6 +729,7 @@ function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
 const TWILIGHT_POLY_MAX_DEG = ${TWILIGHT_POLY_MAX_DEG};
 const TWILIGHT_POLY_EXPS = ${JSON.stringify(TWILIGHT_POLY_EXPS)};
 const TWILIGHT_POLY_COEFS = ${JSON.stringify(TWILIGHT_POLY_COEFS)};
+const MEXICO_COEFS = ${JSON.stringify(MEXICO_COEFS)};
 const FILTER_APPLY = {
 ${filterEntries}
 };
