@@ -1273,6 +1273,7 @@ function showUpload() {
   if (hegsethEl) hegsethEl.style.display = 'none';
   if (mexicoEl) mexicoEl.style.display = 'none';
   if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+  hideGpuPreviewOverlay();
   filterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'none'));
   filterIntensityRow.classList.add('hidden');
   filterLayerRow.classList.add('hidden');
@@ -1297,11 +1298,15 @@ function showUpload() {
   _previewRenderedSeq = 0;
   _previewRenderInFlight = false;
   _previewRenderPending = false;
-  previewSourceCache.data = null;
-  previewSourceCache.w = 0;
-  previewSourceCache.h = 0;
-  previewSourceCache.key = '';
-  previewSourceCache.dirty = true;
+  previewGpuSourceCache.w = 0;
+  previewGpuSourceCache.h = 0;
+  previewGpuSourceCache.key = '';
+  previewGpuSourceCache.dirty = true;
+  previewPixelSourceCache.data = null;
+  previewPixelSourceCache.w = 0;
+  previewPixelSourceCache.h = 0;
+  previewPixelSourceCache.key = '';
+  previewPixelSourceCache.dirty = true;
   perf.previewSourceCacheHits = 0;
   perf.previewSourceCacheMisses = 0;
   setUploadBusy(false);
@@ -1593,7 +1598,7 @@ class TextObject {
       this.text = this.innerEl.textContent;
       markPreviewSourceDirty();
       if (state.filter.applyOnTop) {
-        scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+        scheduleImageFilterRender({ interactive: true });
       }
     });
 
@@ -1616,6 +1621,11 @@ class TextObject {
 
   reposition() {
     this._applyStyle(); // pixel size depends on container width; recompute on resize
+    this._positionEl();
+    markPreviewSourceDirty();
+  }
+
+  repositionFast() {
     this._positionEl();
     markPreviewSourceDirty();
   }
@@ -1780,6 +1790,11 @@ class ImageObject {
     markPreviewSourceDirty();
   }
 
+  repositionFast() {
+    this._positionEl();
+    markPreviewSourceDirty();
+  }
+
   select() {
     this.el.classList.add('selected');
   }
@@ -1903,15 +1918,18 @@ function selectField(tf) {
   }
   state.selectedObject = tf;
   tf.select();
-  markPreviewSourceDirty();
   syncTextFieldLayering();
-  scheduleImageFilterRender({ settle: true });
+  if (shouldRefreshPreviewForSelectionChange()) {
+    scheduleImageFilterRender({ settle: true });
+  }
   loadFieldStyle(tf);
   updatePanel();
 }
 
 function deselectAll() {
+  let hadSelection = false;
   if (state.selectedObject) {
+    hadSelection = true;
     if (state.selectedObject.type === 'text') {
       state.lastStyle  = { ...state.selectedObject.style };
       state.lastPreset = state.selectedObject.activePreset ?? null;
@@ -1919,9 +1937,10 @@ function deselectAll() {
     state.selectedObject.deselect();
     state.selectedObject = null;
   }
-  markPreviewSourceDirty();
   syncTextFieldLayering();
-  scheduleImageFilterRender({ settle: true });
+  if (hadSelection && shouldRefreshPreviewForSelectionChange()) {
+    scheduleImageFilterRender({ settle: true });
+  }
   updatePanel();
 }
 
@@ -2145,7 +2164,7 @@ function startDrag(e, tf, opts = {}) {
     ({ pos: tf.xPct, snap: snapX } = snapAxis(rawX, snapX));
     ({ pos: tf.yPct, snap: snapY } = snapAxis(rawY, snapY));
 
-    tf.reposition();
+    tf.repositionFast?.();
     showGuides(true, snapX, snapY);
   }
 
@@ -2194,7 +2213,7 @@ function startRotate(e, tf) {
     const deltaDeg = angleDeltaDeg(startAngle, angle);
     const rawDeg = origDeg + deltaDeg;
     ({ deg: tf.style.rotateDeg, snap: snapDeg } = snapRotationDeg(rawDeg, snapDeg));
-    tf.reposition();
+    tf.repositionFast?.();
     tf.rotateEl.classList.toggle('snapped', snapDeg !== null);
     showRotateGuides(true, tf.xPct, tf.yPct, getRotationSnapAxis(snapDeg));
   }
@@ -2779,14 +2798,32 @@ let solarpunkEl = null;
 let hegsethEl = null;
 let mexicoEl = null;
 let finalPreviewEl = null;
+let gpuPreviewEl = null;
 let vaporSrcCanvas = null;
 let vaporSrcCtx    = null;
 let grainBuffer    = null;
 let grainBufferW   = 0;
 let grainBufferH   = 0;
 let grainNoiseTs   = 0;
+const GPU_PREVIEW_FILTERS = new Set(['vaporwave', 'hegseth']);
+const gpuPreview = {
+  gl: null,
+  program: null,
+  posBuffer: null,
+  tex: null,
+  loc: null,
+  ready: false,
+  failed: false,
+};
 
-const previewSourceCache = {
+const previewGpuSourceCache = {
+  dirty: true,
+  w: 0,
+  h: 0,
+  key: '',
+};
+
+const previewPixelSourceCache = {
   dirty: true,
   w: 0,
   h: 0,
@@ -2795,12 +2832,12 @@ const previewSourceCache = {
 };
 
 function markPreviewSourceDirty() {
-  previewSourceCache.dirty = true;
+  previewGpuSourceCache.dirty = true;
+  previewPixelSourceCache.dirty = true;
 }
 
 function makePreviewSourceCacheKey(w, h) {
-  const selectedId = state.selectedObject ? state.selectedObject.id : -1;
-  return `${w}x${h}|onTop:${state.filter.applyOnTop ? 1 : 0}|sel:${selectedId}`;
+  return `${w}x${h}|onTop:${state.filter.applyOnTop ? 1 : 0}`;
 }
 
 function ensureVaporSrcContext() {
@@ -2824,6 +2861,239 @@ function updateOverlayLayering(el) {
   el.style.zIndex = state.filter.applyOnTop ? '30' : 'auto';
 }
 
+function hideGpuPreviewOverlay() {
+  if (gpuPreviewEl) gpuPreviewEl.style.display = 'none';
+}
+
+function canUseGpuPreview(name, quality) {
+  return quality === 'interactive' && GPU_PREVIEW_FILTERS.has(name) && !gpuPreview.failed;
+}
+
+function createGpuShader(gl, type, src) {
+  const shader = gl.createShader(type);
+  if (!shader) return null;
+  gl.shaderSource(shader, src);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+function createGpuProgram(gl, vertexSrc, fragSrc) {
+  const vs = createGpuShader(gl, gl.VERTEX_SHADER, vertexSrc);
+  const fs = createGpuShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+  if (!vs || !fs) {
+    if (vs) gl.deleteShader(vs);
+    if (fs) gl.deleteShader(fs);
+    return null;
+  }
+  const program = gl.createProgram();
+  if (!program) {
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    return null;
+  }
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    gl.deleteProgram(program);
+    return null;
+  }
+  return program;
+}
+
+function ensureGpuPreviewContext() {
+  if (gpuPreview.failed) return null;
+  if (!gpuPreviewEl) gpuPreviewEl = makeOverlayCanvas();
+  updateOverlayLayering(gpuPreviewEl);
+  gpuPreviewEl.style.mixBlendMode = 'normal';
+  if (!gpuPreview.gl) {
+    const gl = gpuPreviewEl.getContext('webgl2', {
+      alpha: true,
+      antialias: false,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
+    }) || gpuPreviewEl.getContext('webgl', {
+      alpha: true,
+      antialias: false,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
+    });
+    if (!gl) {
+      gpuPreview.failed = true;
+      return null;
+    }
+    const vertexSrc = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main() {
+  v_uv = (a_pos + 1.0) * 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+    const fragSrc = `
+precision mediump float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_texel;
+uniform float u_filterType;
+uniform float u_intensity;
+uniform float u_chroma;
+uniform float u_scanlines;
+uniform float u_scanlineSize;
+uniform float u_angle;
+uniform float u_ghostDistance;
+uniform float u_pixelScale;
+
+float sat(float x) { return clamp(x, 0.0, 1.0); }
+
+vec3 applyVaporwave(vec2 uv) {
+  vec4 src = texture2D(u_tex, uv);
+  float t = u_intensity;
+  float chromaShiftPx = 30.0 * (u_chroma / 100.0) * u_pixelScale;
+  vec2 off = vec2(chromaShiftPx * u_texel.x, 0.0);
+  float r = texture2D(u_tex, uv + off).r;
+  float g = src.g;
+  float b = texture2D(u_tex, uv - off).b;
+  float lm = dot(src.rgb, vec3(0.299, 0.587, 0.114));
+  vec3 c = vec3(r, g, b);
+  float satBoost = 1.0 + 1.1 * t;
+  c = vec3(lm) + (c - vec3(lm)) * satBoost;
+  float bright = lm;
+  c += vec3(10.0 + bright * 30.0, -(28.0 - bright * 8.0), 42.0 - bright * 22.0) * (t / 255.0);
+  float contrast = 1.0 + 0.3 * t;
+  c = (c - vec3(0.5019608)) * contrast + vec3(0.5019608);
+  float scanSize = max(1.0, u_scanlineSize * max(0.25, u_pixelScale));
+  float lineOn = step(mod(gl_FragCoord.y, scanSize), 0.5);
+  float scanDim = max(0.0, 1.0 - 0.35 * (u_scanlines / 100.0));
+  float scan = mix(scanDim, 1.0, lineOn);
+  return clamp(c * scan, 0.0, 1.0);
+}
+
+vec3 applyHegseth(vec2 uv) {
+  float t = u_intensity;
+  vec4 src = texture2D(u_tex, uv);
+  float angleRad = radians(u_angle);
+  vec2 dir = vec2(cos(angleRad), sin(angleRad));
+  float distanceMul = 0.35 + 1.25 * (u_ghostDistance / 100.0);
+  float shift1 = max(1.0, (2.0 + 14.0 * t) * distanceMul * u_pixelScale);
+  float shift2 = max(2.0, (5.0 + 24.0 * t) * distanceMul * u_pixelScale);
+  float wobble = sin((gl_FragCoord.y / max(0.0001, u_pixelScale)) * 0.08) * (2.3 * t * u_pixelScale);
+  vec2 off1 = (dir * shift1 + vec2(wobble, 0.0)) * u_texel;
+  vec2 off2 = (dir * shift2 + vec2(wobble * 0.5, 0.0)) * u_texel;
+  vec3 base = (
+    texture2D(u_tex, uv - vec2(u_texel.x, 0.0)).rgb +
+    src.rgb +
+    texture2D(u_tex, uv + vec2(u_texel.x, 0.0)).rgb
+  ) / 3.0;
+  vec3 g1 = (
+    texture2D(u_tex, uv + off1).rgb +
+    texture2D(u_tex, uv + off1 + vec2(sign(off1.x) * u_texel.x, 0.0)).rgb
+  ) * 0.5;
+  vec3 g2 = (
+    texture2D(u_tex, uv - off2).rgb +
+    texture2D(u_tex, uv - off2 - vec2(sign(off2.x) * u_texel.x, 0.0)).rgb
+  ) * 0.5;
+  float mainW = 0.58;
+  float g1W = 0.24 + 0.16 * t;
+  float g2W = 0.12 + 0.10 * t;
+  vec3 mixed = (base * mainW + g1 * g1W + g2 * g2W) / (mainW + g1W + g2W);
+  return mix(src.rgb, mixed, t);
+}
+
+void main() {
+  vec3 c = texture2D(u_tex, v_uv).rgb;
+  if (u_filterType < 1.5) {
+    c = applyVaporwave(v_uv);
+  } else {
+    c = applyHegseth(v_uv);
+  }
+  gl_FragColor = vec4(sat(c.r), sat(c.g), sat(c.b), 1.0);
+}
+`;
+    const program = createGpuProgram(gl, vertexSrc, fragSrc);
+    if (!program) {
+      gpuPreview.failed = true;
+      return null;
+    }
+
+    const posBuffer = gl.createBuffer();
+    const tex = gl.createTexture();
+    if (!posBuffer || !tex) {
+      gpuPreview.failed = true;
+      return null;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,  1, -1, -1, 1,
+      -1,  1,  1, -1,  1, 1,
+    ]), gl.STATIC_DRAW);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+    const loc = {
+      aPos: gl.getAttribLocation(program, 'a_pos'),
+      uTex: gl.getUniformLocation(program, 'u_tex'),
+      uTexel: gl.getUniformLocation(program, 'u_texel'),
+      uFilterType: gl.getUniformLocation(program, 'u_filterType'),
+      uIntensity: gl.getUniformLocation(program, 'u_intensity'),
+      uChroma: gl.getUniformLocation(program, 'u_chroma'),
+      uScanlines: gl.getUniformLocation(program, 'u_scanlines'),
+      uScanlineSize: gl.getUniformLocation(program, 'u_scanlineSize'),
+      uAngle: gl.getUniformLocation(program, 'u_angle'),
+      uGhostDistance: gl.getUniformLocation(program, 'u_ghostDistance'),
+      uPixelScale: gl.getUniformLocation(program, 'u_pixelScale'),
+    };
+
+    gpuPreview.gl = gl;
+    gpuPreview.program = program;
+    gpuPreview.posBuffer = posBuffer;
+    gpuPreview.tex = tex;
+    gpuPreview.loc = loc;
+    gpuPreview.ready = true;
+  }
+  return gpuPreview.gl;
+}
+
+function renderGpuPreviewFilter(sourceCanvas, w, h, name, intensity, params, pixelScale) {
+  const gl = ensureGpuPreviewContext();
+  if (!gl || !gpuPreview.ready || !gpuPreviewEl) return false;
+  if (gpuPreviewEl.width !== w) gpuPreviewEl.width = w;
+  if (gpuPreviewEl.height !== h) gpuPreviewEl.height = h;
+  updateOverlayLayering(gpuPreviewEl);
+  gpuPreviewEl.style.display = '';
+  gpuPreviewEl.style.opacity = '1';
+  gl.viewport(0, 0, w, h);
+  gl.useProgram(gpuPreview.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gpuPreview.posBuffer);
+  gl.enableVertexAttribArray(gpuPreview.loc.aPos);
+  gl.vertexAttribPointer(gpuPreview.loc.aPos, 2, gl.FLOAT, false, 0, 0);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, gpuPreview.tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+  gl.uniform1i(gpuPreview.loc.uTex, 0);
+  gl.uniform2f(gpuPreview.loc.uTexel, 1 / Math.max(1, w), 1 / Math.max(1, h));
+  gl.uniform1f(gpuPreview.loc.uFilterType, name === 'hegseth' ? 2 : 1);
+  gl.uniform1f(gpuPreview.loc.uIntensity, intensity);
+  gl.uniform1f(gpuPreview.loc.uChroma, params?.chroma ?? 20);
+  gl.uniform1f(gpuPreview.loc.uScanlines, params?.scanlines ?? 60);
+  gl.uniform1f(gpuPreview.loc.uScanlineSize, params?.scanlineSize ?? 2);
+  gl.uniform1f(gpuPreview.loc.uAngle, params?.angle ?? 0);
+  gl.uniform1f(gpuPreview.loc.uGhostDistance, params?.ghostDistance ?? 50);
+  gl.uniform1f(gpuPreview.loc.uPixelScale, pixelScale);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  return !gl.getError();
+}
+
 function isPixelPreviewFilter(name) {
   return name !== 'none';
 }
@@ -2837,6 +3107,10 @@ function syncTextFieldLayering() {
 
 function isObjectFilterBypassed(tf) {
   return state.filter.applyOnTop && state.selectedObject === tf;
+}
+
+function shouldRefreshPreviewForSelectionChange() {
+  return state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
 }
 
 function drawPreviewObjectLayers(ctx, w, h) {
@@ -3229,6 +3503,8 @@ function hideLegacyFilterOverlays() {
 }
 
 const PREVIEW_INTERACTION_FPS = 60;
+const PREVIEW_INTERACTIVE_SCALE = 0.72;
+const PREVIEW_INTERACTIVE_MAX_PIXELS = 900000;
 const PREVIEW_INTERACTION_WINDOW_MS = 160;
 const SETTLE_MODE_MIN_SAMPLES = 16;
 const SETTLE_MODE_TOTAL_MS_HIGH = 26;
@@ -3244,11 +3520,26 @@ let _previewThrottleTimer = 0;
 let _lastPreviewRenderTs = 0;
 
 function computePreviewTargetSize(quality = 'settle') {
-  const renderedW = baseImage.offsetWidth || 1;
-  const renderedH = baseImage.offsetHeight || 1;
+  const renderedW = Math.max(1, baseImage.offsetWidth || 1);
+  const renderedH = Math.max(1, baseImage.offsetHeight || 1);
+  if (quality !== 'interactive') {
+    return {
+      w: Math.round(renderedW),
+      h: Math.round(renderedH),
+    };
+  }
+
+  let targetW = renderedW * PREVIEW_INTERACTIVE_SCALE;
+  let targetH = renderedH * PREVIEW_INTERACTIVE_SCALE;
+  const area = targetW * targetH;
+  if (area > PREVIEW_INTERACTIVE_MAX_PIXELS) {
+    const downscale = Math.sqrt(PREVIEW_INTERACTIVE_MAX_PIXELS / area);
+    targetW *= downscale;
+    targetH *= downscale;
+  }
   return {
-    w: Math.max(1, Math.round(renderedW)),
-    h: Math.max(1, Math.round(renderedH)),
+    w: Math.max(1, Math.round(targetW)),
+    h: Math.max(1, Math.round(targetH)),
   };
 }
 
@@ -3270,11 +3561,9 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const name = state.filter.name;
   if (name === 'none') {
     if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+    hideGpuPreviewOverlay();
     return;
   }
-  if (!finalPreviewEl) finalPreviewEl = makeOverlayCanvas();
-  updateOverlayLayering(finalPreviewEl);
-  finalPreviewEl.style.mixBlendMode = 'normal';
 
   const { w, h } = computePreviewTargetSize(quality);
   const t = state.filter.intensity / 100;
@@ -3289,16 +3578,71 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   let sourceBuildMs = 0;
   let sourceCopyMs = 0;
   let sourceCacheHit = false;
+  const canGpu = canUseGpuPreview(name, quality);
+  if (canGpu) {
+    if (!previewGpuSourceCache.dirty &&
+        previewGpuSourceCache.w === w &&
+        previewGpuSourceCache.h === h &&
+        previewGpuSourceCache.key === sourceKey) {
+      sourceCacheHit = true;
+    } else {
+      const sourceBuildStart = performance.now();
+      vaporSrcCtx.clearRect(0, 0, w, h);
+      vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+      if (state.filter.applyOnTop) {
+        drawPreviewObjectLayers(vaporSrcCtx, w, h);
+      }
+      sourceBuildMs = performance.now() - sourceBuildStart;
+      previewGpuSourceCache.w = w;
+      previewGpuSourceCache.h = h;
+      previewGpuSourceCache.key = sourceKey;
+      previewGpuSourceCache.dirty = false;
+    }
+    if (renderSeq !== _previewRenderSeq) {
+      perf.stalePreviewDrops++;
+      renderPerfPanel();
+      return;
+    }
+    const renderedW = baseImage.offsetWidth || w;
+    const pixelScale = renderedW > 0 ? (w / renderedW) : 1;
+    const filterStartTs = performance.now();
+    if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+    const usedGpu = renderGpuPreviewFilter(vaporSrcCanvas, w, h, name, t, state.filter.params, pixelScale);
+    const endTs = performance.now();
+    if (usedGpu) {
+      perf.settleExecMode = 'gpu';
+      recordPreviewPerf({
+        filter: name,
+        quality,
+        w,
+        h,
+        queueWaitMs: perf.previewRenderQueueWaitMs,
+        composeMs: sourceBuildMs,
+        sourceBuildMs,
+        sourceCopyMs: 0,
+        sourceCacheHit,
+        filterMs: endTs - filterStartTs,
+        commitMs: 0,
+        totalMs: endTs - previewStartTs,
+        worker: false,
+        workerFallback: false,
+        mainThread: false,
+        settleExecMode: 'gpu',
+      });
+      return;
+    }
+  }
+
   let previewData;
-  if (!previewSourceCache.dirty &&
-      previewSourceCache.data &&
-      previewSourceCache.w === w &&
-      previewSourceCache.h === h &&
-      previewSourceCache.key === sourceKey) {
+  if (!previewPixelSourceCache.dirty &&
+      previewPixelSourceCache.data &&
+      previewPixelSourceCache.w === w &&
+      previewPixelSourceCache.h === h &&
+      previewPixelSourceCache.key === sourceKey) {
     sourceCacheHit = true;
     const sourceCopyStart = performance.now();
     previewData = vaporSrcCtx.createImageData(w, h);
-    previewData.data.set(previewSourceCache.data);
+    previewData.data.set(previewPixelSourceCache.data);
     sourceCopyMs = performance.now() - sourceCopyStart;
   } else {
     const sourceBuildStart = performance.now();
@@ -3309,11 +3653,15 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
     }
     previewData = vaporSrcCtx.getImageData(0, 0, w, h);
     sourceBuildMs = performance.now() - sourceBuildStart;
-    previewSourceCache.data = new Uint8ClampedArray(previewData.data);
-    previewSourceCache.w = w;
-    previewSourceCache.h = h;
-    previewSourceCache.key = sourceKey;
-    previewSourceCache.dirty = false;
+    previewPixelSourceCache.data = new Uint8ClampedArray(previewData.data);
+    previewPixelSourceCache.w = w;
+    previewPixelSourceCache.h = h;
+    previewPixelSourceCache.key = sourceKey;
+    previewPixelSourceCache.dirty = false;
+    previewGpuSourceCache.w = w;
+    previewGpuSourceCache.h = h;
+    previewGpuSourceCache.key = sourceKey;
+    previewGpuSourceCache.dirty = false;
   }
   // Match perceived intensity with export for scale-sensitive filters by
   // compensating for preview downscale. Export uses natural/rendered scale,
@@ -3341,6 +3689,9 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
     renderPerfPanel();
     return;
   }
+  if (!finalPreviewEl) finalPreviewEl = makeOverlayCanvas();
+  updateOverlayLayering(finalPreviewEl);
+  finalPreviewEl.style.mixBlendMode = 'normal';
   if (finalPreviewEl.width !== w) finalPreviewEl.width = w;
   if (finalPreviewEl.height !== h) finalPreviewEl.height = h;
   finalPreviewEl.style.display = '';
@@ -3348,6 +3699,9 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const commitStartTs = performance.now();
   const pc = finalPreviewEl.getContext('2d');
   pc.putImageData(previewData, 0, 0);
+  // Keep GPU interactive preview visible until settle pixels are committed,
+  // then swap overlays to avoid a flash back to the unfiltered base image.
+  hideGpuPreviewOverlay();
   const endTs = performance.now();
   recordPreviewPerf({
     filter: name,
@@ -3493,6 +3847,7 @@ filterChips.forEach(chip => {
     }
     hideLegacyFilterOverlays();
     if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+    hideGpuPreviewOverlay();
 
     filterChips.forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
@@ -3523,7 +3878,7 @@ filterChips.forEach(chip => {
 
 ctrlFilterIntensity.addEventListener('input', () => {
   state.filter.intensity = parseInt(ctrlFilterIntensity.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlFilterOnTop.addEventListener('change', () => {
@@ -3534,52 +3889,52 @@ ctrlFilterOnTop.addEventListener('change', () => {
 
 ctrlGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlGrain.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlScanlines.addEventListener('input', () => {
   state.filter.params.scanlines = parseInt(ctrlScanlines.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlScanlineSize.addEventListener('input', () => {
   state.filter.params.scanlineSize = parseInt(ctrlScanlineSize.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlChroma.addEventListener('input', () => {
   state.filter.params.chroma = parseInt(ctrlChroma.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlDaGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlDaGrain.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlVignette.addEventListener('input', () => {
   state.filter.params.vignette = parseInt(ctrlVignette.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlBloom.addEventListener('input', () => {
   state.filter.params.bloom = parseInt(ctrlBloom.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlHaze.addEventListener('input', () => {
   state.filter.params.haze = parseInt(ctrlHaze.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlHegsethAngle.addEventListener('input', () => {
   state.filter.params.angle = parseInt(ctrlHegsethAngle.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlHegsethGhostDistance.addEventListener('input', () => {
   state.filter.params.ghostDistance = parseInt(ctrlHegsethGhostDistance.value);
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 [
@@ -4439,9 +4794,9 @@ window.addEventListener('keydown', (e) => {
   const obj = state.selectedObject;
   obj.xPct = Math.max(0, Math.min(1, obj.xPct + (dxPx / cw)));
   obj.yPct = Math.max(0, Math.min(1, obj.yPct + (dyPx / ch)));
-  obj.reposition?.();
+  obj.repositionFast?.();
   markPreviewSourceDirty();
-  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+  scheduleImageFilterRender({ interactive: true });
 });
 
 window.addEventListener('keydown', (e) => {
