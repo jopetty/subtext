@@ -1380,30 +1380,87 @@ input[type="range"]::-moz-range-thumb {
 /* ===== MOBILE — tab-based panel switching ===== */
 
 @media (max-width: 769px) {
+  /* Use the visible viewport on mobile Safari/PWA so the bottom tray never
+     sits underneath browser chrome. */
+  .screen {
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: auto;
+    height: 100vh;
+  }
+
+  @supports (height: 100dvh) {
+    .screen {
+      height: 100dvh;
+    }
+  }
+
   #base-image {
     max-height: none;
   }
 
-  #bottom-panel[data-panel="typography"] {
-    overflow: visible;
+  #bottom-panel {
+    position: relative;
+    height: auto;
+    min-height: 0;
+    padding-top: 0.2rem;
+    padding-bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
+    overflow-x: visible;
+    overflow-y: hidden;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: start;
   }
 
-  /* When the Vibe tab is active, hide Typography and show Vibe */
-  #bottom-panel[data-panel="vibe"] #font-controls {
-    display: none;
+  #panel-tabs {
+    grid-column: 1;
+    grid-row: 1;
+    margin-bottom: 0;
   }
 
-  #bottom-panel[data-panel="vibe"] #filter-section {
-    display: flex;
-    flex-direction: column;
+  #font-controls {
+    grid-column: 1;
+    grid-row: 2;
     flex: none;
-    min-height: auto;
-    overflow: hidden;
+    min-height: 0;
+    justify-content: flex-start;
     gap: 0.45rem;
     padding-top: 0.4rem;
   }
 
-  /* Compact form controls — save vertical space in the fixed-height panel */
+  /* Keep typography controls in layout so panel height stays intrinsic.
+     Vibe controls are overlaid into the same row when active. */
+  #filter-section {
+    grid-column: 1;
+    grid-row: 2;
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    min-height: 0;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    gap: 0.45rem;
+    padding-top: 0;
+  }
+
+  #bottom-panel[data-panel="vibe"] #font-controls {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  #bottom-panel[data-panel="vibe"] #filter-section {
+    height: 100%;
+    overflow-y: auto;
+    opacity: 1;
+    pointer-events: auto;
+    padding-top: 0.4rem;
+  }
+
+  /* Compact form controls — save vertical space in the mobile tray */
   select,
   input[type="color"],
   input[type="range"] {
@@ -1420,32 +1477,11 @@ input[type="range"]::-moz-range-thumb {
     height: 30px;
   }
 
-  /* space-between distributes rows evenly without leading/trailing gaps.
-     padding-top provides a consistent, explicit gap below the tab bar. */
-  #font-controls {
-    flex: none;
-    justify-content: flex-start;
-    gap: 0.45rem;
-    padding-top: 0.4rem;
-  }
-
-  /* Tighter panel chrome */
-  #bottom-panel {
-    padding-top: 0.2rem;
-    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-    overflow-x: visible;
-    overflow-y: hidden;
-  }
-
   .font-select-menu {
     top: auto;
     bottom: calc(100% + 6px);
     max-height: min(40vh, 240px);
     z-index: 320;
-  }
-
-  #panel-tabs {
-    margin-bottom: 0;
   }
 
   /* Tighter label/header gaps */
