@@ -1402,6 +1402,13 @@ class TextObject {
     rotate.setAttribute('aria-label', 'Rotate object');
     rotate.innerHTML = '<img src="icons/switch_access_shortcut_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg?v=3" alt="" aria-hidden="true" />';
 
+    const resize = document.createElement('button');
+    resize.type = 'button';
+    resize.className = 'text-field-resize';
+    resize.title = 'Resize';
+    resize.setAttribute('aria-label', 'Resize object');
+    resize.innerHTML = '<img src="icons/open_in_full_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="" aria-hidden="true" />';
+
     const inner = document.createElement('div');
     inner.className = 'text-field-inner';
     inner.contentEditable = 'true';
@@ -1415,6 +1422,7 @@ class TextObject {
 
     wrap.appendChild(del);
     wrap.appendChild(rotate);
+    wrap.appendChild(resize);
     wrap.appendChild(inner);
     canvasContainer.appendChild(wrap);
 
@@ -1422,6 +1430,7 @@ class TextObject {
     this.innerEl = inner;
     this.delEl = del;
     this.rotateEl = rotate;
+    this.resizeEl = resize;
 
     this._applyStyle();
     this._positionEl();
@@ -1495,7 +1504,12 @@ class TextObject {
 
     // Direct-drag interaction: click+drag moves object; click on selected text enters edit mode.
     this.el.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || e.target === this.delEl || e.target === this.rotateEl || this.rotateEl.contains(e.target)) return;
+      if (
+        e.button !== 0 ||
+        e.target === this.delEl ||
+        e.target === this.rotateEl || this.rotateEl.contains(e.target) ||
+        e.target === this.resizeEl || this.resizeEl.contains(e.target)
+      ) return;
       e.stopPropagation();
       if (document.activeElement === this.innerEl) return;
 
@@ -1511,6 +1525,15 @@ class TextObject {
       e.preventDefault();
       selectField(this);
       startRotate(e, this);
+      clearPreset();
+    });
+
+    this.resizeEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      selectField(this);
+      startResize(e, this);
       clearPreset();
     });
 
@@ -1888,6 +1911,38 @@ function startRotate(e, tf) {
     tf.el.classList.remove('rotating');
     tf.rotateEl.classList.remove('snapped');
     showRotateGuides(false);
+  }
+
+  window.addEventListener('pointermove', onMove, { passive: false });
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+}
+
+function startResize(e, tf) {
+  const rect = canvasContainer.getBoundingClientRect();
+  const centerX = rect.left + tf.xPct * canvasContainer.offsetWidth;
+  const centerY = rect.top + tf.yPct * canvasContainer.offsetHeight;
+  const startDist = Math.max(1, Math.hypot(e.clientX - centerX, e.clientY - centerY));
+  const origSize = tf.style.size || 5;
+  const minSize = parseFloat(ctrlSize?.min || '1');
+  const maxSize = parseFloat(ctrlSize?.max || '25');
+  tf.el.classList.add('resizing');
+
+  function onMove(ev) {
+    ev.preventDefault();
+    const dist = Math.max(1, Math.hypot(ev.clientX - centerX, ev.clientY - centerY));
+    const rawSize = origSize * (dist / startDist);
+    const size = Math.max(minSize, Math.min(maxSize, rawSize));
+    tf.updateStyle({ size });
+    if (ctrlSize) ctrlSize.value = String(size);
+    if (ctrlSizeVal) ctrlSizeVal.textContent = `${size}%`;
+  }
+
+  function onUp() {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    tf.el.classList.remove('resizing');
   }
 
   window.addEventListener('pointermove', onMove, { passive: false });

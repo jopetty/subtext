@@ -623,7 +623,8 @@ html, body {
 
 
 .text-field-delete,
-.text-field-rotate {
+.text-field-rotate,
+.text-field-resize {
   display: none;
   position: absolute;
   width: 22px;
@@ -642,7 +643,8 @@ html, body {
 }
 
 .text-field.selected .text-field-delete,
-.text-field.selected .text-field-rotate {
+.text-field.selected .text-field-rotate,
+.text-field.selected .text-field-resize {
   display: flex;
 }
 
@@ -657,7 +659,7 @@ html, body {
   top: -14px;
   right: -14px;
   background: var(--accent);
-  cursor: grab;
+  cursor: nwse-resize;
   padding: 0;
 }
 
@@ -668,8 +670,23 @@ html, body {
   filter: brightness(0) invert(1);
 }
 
-.text-field-delete > svg,
-.text-field-rotate > img {
+.text-field-resize {
+  right: -14px;
+  bottom: -14px;
+  background: var(--accent);
+  cursor: nwse-resize;
+  padding: 0;
+}
+
+.text-field-resize img {
+  width: 14px;
+  height: 14px;
+  display: block;
+  filter: brightness(0) invert(1);
+  transform: scaleY(-1);
+}
+
+.text-field-delete > svg {
   transform: rotate(calc(var(--object-rotate-deg, 0deg) * -1));
   transform-origin: center;
 }
@@ -679,8 +696,9 @@ html, body {
 }
 
 .text-field.dragging,
-.text-field.rotating .text-field-rotate {
-  cursor: grabbing;
+.text-field.rotating .text-field-rotate,
+.text-field.resizing .text-field-resize {
+  cursor: nwse-resize;
 }
 
 .text-field-inner {
