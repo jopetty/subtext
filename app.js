@@ -928,6 +928,11 @@ const presetBtns       = document.querySelectorAll('.preset-btn');
 const uploadStatus     = document.getElementById('upload-status');
 const uploadStatusText = document.getElementById('upload-status-text');
 
+if (baseImage) {
+  baseImage.draggable = false;
+  baseImage.addEventListener('dragstart', (e) => e.preventDefault());
+}
+
 // ─── Image loading ─────────────────────────────────────────────────────────────
 
 const HEIC_MIME_RE = /^image\/hei(c|f|x|s)$/i;
@@ -1469,8 +1474,8 @@ class TextObject {
       inner.style.webkitTextStroke = '0px transparent';
     }
 
-    // Min-width so small text is still tappable
-    inner.style.minWidth = Math.max(60, px * 3) + 'px';
+    // Keep a small edit/tap floor, but let the box hug text width.
+    inner.style.minWidth = Math.max(24, px * 1.1) + 'px';
   }
 
   _positionEl() {
@@ -1699,7 +1704,7 @@ const GUIDE_POSITIONS = [1 / 3, 1 / 2, 2 / 3];
 // Hysteresis thresholds (as fraction of image dimension)
 const SNAP_IN  = 0.021; // snap when raw position comes within this distance
 const SNAP_OUT = 0.038; // unsnap when dragged this far past the guide
-const ROTATE_SNAP_GUIDES = [0, 90, 180, 270];
+const ROTATE_SNAP_GUIDES = [0, 45, 90, 135, 180, 225, 270, 315];
 const ROTATE_SNAP_IN_DEG = 4;
 const ROTATE_SNAP_OUT_DEG = 9;
 
@@ -1707,6 +1712,8 @@ const guideVEls = []; // vertical lines (x positions)
 const guideHEls = []; // horizontal lines (y positions)
 let rotateGuideVEl = null;
 let rotateGuideHEl = null;
+let rotateGuideD1El = null;
+let rotateGuideD2El = null;
 
 function initGuides() {
   GUIDE_POSITIONS.forEach(p => {
@@ -1730,6 +1737,14 @@ function initGuides() {
   rotateGuideHEl = document.createElement('div');
   rotateGuideHEl.className = 'guide guide-rotate guide-rotate-h';
   canvasContainer.appendChild(rotateGuideHEl);
+
+  rotateGuideD1El = document.createElement('div');
+  rotateGuideD1El.className = 'guide guide-rotate guide-rotate-d1';
+  canvasContainer.appendChild(rotateGuideD1El);
+
+  rotateGuideD2El = document.createElement('div');
+  rotateGuideD2El.className = 'guide guide-rotate guide-rotate-d2';
+  canvasContainer.appendChild(rotateGuideD2El);
 }
 
 // Show or hide all guide lines, highlighting whichever axes are snapped.
@@ -1744,15 +1759,23 @@ function showGuides(visible, snapX = null, snapY = null) {
 }
 
 function showRotateGuides(visible, centerXPct = 0.5, centerYPct = 0.5, snapAxis = null) {
-  if (!rotateGuideVEl || !rotateGuideHEl) return;
+  if (!rotateGuideVEl || !rotateGuideHEl || !rotateGuideD1El || !rotateGuideD2El) return;
   const left = `${centerXPct * 100}%`;
   const top = `${centerYPct * 100}%`;
   rotateGuideVEl.style.left = left;
   rotateGuideHEl.style.top = top;
+  rotateGuideD1El.style.left = left;
+  rotateGuideD2El.style.left = left;
+  rotateGuideD1El.style.top = top;
+  rotateGuideD2El.style.top = top;
   rotateGuideVEl.classList.toggle('visible', visible);
   rotateGuideHEl.classList.toggle('visible', visible);
+  rotateGuideD1El.classList.toggle('visible', visible);
+  rotateGuideD2El.classList.toggle('visible', visible);
   rotateGuideVEl.classList.toggle('snapped', visible && snapAxis === 'y');
   rotateGuideHEl.classList.toggle('snapped', visible && snapAxis === 'x');
+  rotateGuideD1El.classList.toggle('snapped', visible && snapAxis === 'd1');
+  rotateGuideD2El.classList.toggle('snapped', visible && snapAxis === 'd2');
 }
 
 // Apply sticky snapping to one axis.
@@ -1810,10 +1833,11 @@ function normalizeDeg0To360(deg) {
 function getRotationSnapAxis(snapDeg) {
   if (snapDeg === null || snapDeg === undefined) return null;
   const normalized = normalizeDeg0To360(snapDeg);
-  if (normalized < 45 || normalized >= 315 || (normalized >= 135 && normalized < 225)) {
-    return 'x'; // 0 or 180 -> horizontal axis highlight
-  }
-  return 'y'; // 90 or 270 -> vertical axis highlight
+  const snappedIndex = Math.round(normalized / 45) % 8;
+  if (snappedIndex === 0 || snappedIndex === 4) return 'x';   // 0, 180
+  if (snappedIndex === 2 || snappedIndex === 6) return 'y';   // 90, 270
+  if (snappedIndex === 1 || snappedIndex === 5) return 'd1';  // 45, 225
+  return 'd2'; // 135, 315
 }
 
 // ─── Drag to move ─────────────────────────────────────────────────────────────

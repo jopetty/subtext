@@ -532,6 +532,9 @@ html, body {
   max-width: 100%;
   max-height: calc(100vh - var(--top-bar-h) - var(--panel-h) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 40px);
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
 }
 
 /* ===== SNAP GUIDES ===== */
@@ -594,16 +597,41 @@ html, body {
   background: rgba(86, 171, 255, 0.28);
 }
 
+.guide-rotate-d1,
+.guide-rotate-d2 {
+  left: 0;
+  width: 170%;
+  height: 1px;
+  transform-origin: center;
+  border-top: 1px dashed rgba(86, 171, 255, 0.24);
+}
+
+.guide-rotate-d1 {
+  transform: translate(-50%, -0.5px) rotate(45deg);
+}
+
+.guide-rotate-d2 {
+  transform: translate(-50%, -0.5px) rotate(-45deg);
+}
+
 @keyframes rotateGuideFlash {
   from { opacity: 1; }
   to { opacity: 0.75; }
 }
 
 .guide-rotate-v.snapped,
-.guide-rotate-h.snapped {
+.guide-rotate-h.snapped,
+.guide-rotate-d1.snapped,
+.guide-rotate-d2.snapped {
   background: rgba(86, 171, 255, 0.95);
   box-shadow: 0 0 8px rgba(86, 171, 255, 0.65);
   animation: rotateGuideFlash 120ms ease-in-out 0s 2 alternate;
+}
+
+.guide-rotate-d1.snapped,
+.guide-rotate-d2.snapped {
+  border-top-color: rgba(86, 171, 255, 0.95);
+  background: transparent;
 }
 
 /* ===== TEXT FIELDS ===== */
