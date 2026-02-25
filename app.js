@@ -3209,8 +3209,14 @@ presetBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     const preset = PRESETS[btn.dataset.preset];
     if (!preset) return;
-    // Preserve object-level styling and font size — presets only target text traits.
-    const { size: _ignored, blur: _ignoredBlur, bgColor: _ignoredBg, ...presetWithoutSize } = preset;
+    // Preserve object-level styling and geometry — presets only target text traits.
+    const {
+      size: _ignored,
+      blur: _ignoredBlur,
+      bgColor: _ignoredBg,
+      rotateDeg: _ignoredRotate,
+      ...presetWithoutSize
+    } = preset;
     applyControlsToSelected(presetWithoutSize);
     state.lastPreset = btn.dataset.preset;
     if (state.selectedObject) {
