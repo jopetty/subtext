@@ -22,6 +22,185 @@ const state = {
   copyActionAvailable: true,
 };
 
+const PERF_MAX_SAMPLES = 200;
+const perf = {
+  devMode: false,
+  panelEl: null,
+  panelX: null,
+  panelY: null,
+  panelDragging: false,
+  panelDragDx: 0,
+  panelDragDy: 0,
+  previewSamples: [],
+  exportSamples: [],
+  previewFrameTs: [],
+  workerFallbacks: 0,
+  workerErrors: 0,
+  workerTimeouts: 0,
+  stalePreviewDrops: 0,
+  previewQueueDepthMax: 0,
+  previewRenderQueueWaitMs: 0,
+  previewInputTs: 0,
+  previewPendingCount: 0,
+  previewRenderInFlight: 0,
+  previewSourceCacheHits: 0,
+  previewSourceCacheMisses: 0,
+  settleExecMode: 'worker',
+  sampleCounter: 0,
+};
+
+function pushPerfSample(arr, sample) {
+  arr.push(sample);
+  if (arr.length > PERF_MAX_SAMPLES) arr.shift();
+}
+
+function percentile(values, p) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
+  return sorted[idx];
+}
+
+function calcPreviewFps() {
+  const now = performance.now();
+  const cutoff = now - 1000;
+  while (perf.previewFrameTs.length && perf.previewFrameTs[0] < cutoff) {
+    perf.previewFrameTs.shift();
+  }
+  return perf.previewFrameTs.length;
+}
+
+function perfSummary(samples, key) {
+  const vals = samples.map(s => s[key]);
+  return {
+    p50: percentile(vals, 0.5),
+    p95: percentile(vals, 0.95),
+    max: vals.length ? Math.max(...vals) : 0,
+  };
+}
+
+function renderPerfPanel() {
+  if (!perf.devMode || !perf.panelEl) return;
+  const pr = perfSummary(perf.previewSamples, 'totalMs');
+  const pf = perfSummary(perf.previewSamples, 'filterMs');
+  const ps = perfSummary(perf.previewSamples, 'sourceBuildMs');
+  const pq = perfSummary(perf.previewSamples, 'queueWaitMs');
+  const ex = perfSummary(perf.exportSamples, 'totalMs');
+  const ef = perfSummary(perf.exportSamples, 'filterMs');
+  const fps = calcPreviewFps();
+  const sampleCount = perf.previewSamples.length;
+  const cacheHitCount = perf.previewSamples.reduce((n, s) => n + (s.sourceCacheHit ? 1 : 0), 0);
+  const cacheHitPct = sampleCount > 0 ? (cacheHitCount / sampleCount) * 100 : 0;
+  perf.panelEl.textContent =
+    `dev perf\n` +
+    `preview fps: ${fps}\n` +
+    `preview total ms p50/p95/max: ${pr.p50.toFixed(1)} / ${pr.p95.toFixed(1)} / ${pr.max.toFixed(1)}\n` +
+    `preview source-build ms p50/p95/max: ${ps.p50.toFixed(1)} / ${ps.p95.toFixed(1)} / ${ps.max.toFixed(1)}\n` +
+    `preview filter ms p50/p95/max: ${pf.p50.toFixed(1)} / ${pf.p95.toFixed(1)} / ${pf.max.toFixed(1)}\n` +
+    `preview queue ms p50/p95/max: ${pq.p50.toFixed(1)} / ${pq.p95.toFixed(1)} / ${pq.max.toFixed(1)}\n` +
+    `preview source cache hit-rate: ${cacheHitPct.toFixed(1)}% (${perf.previewSourceCacheHits}h/${perf.previewSourceCacheMisses}m)\n` +
+    `settle exec mode: ${perf.settleExecMode}\n` +
+    `preview in-flight/pending/max-pending: ${perf.previewRenderInFlight} / ${perf.previewPendingCount} / ${perf.previewQueueDepthMax}\n` +
+    `preview stale drops: ${perf.stalePreviewDrops}\n` +
+    `worker fallback/errors/timeouts: ${perf.workerFallbacks} / ${perf.workerErrors} / ${perf.workerTimeouts}\n` +
+    `export total ms p50/p95/max: ${ex.p50.toFixed(1)} / ${ex.p95.toFixed(1)} / ${ex.max.toFixed(1)}\n` +
+    `export filter ms p50/p95/max: ${ef.p50.toFixed(1)} / ${ef.p95.toFixed(1)} / ${ef.max.toFixed(1)}\n` +
+    `samples preview/export: ${perf.previewSamples.length} / ${perf.exportSamples.length}`;
+}
+
+function ensurePerfPanel() {
+  if (perf.panelEl) return perf.panelEl;
+  const el = document.createElement('pre');
+  el.id = 'dev-perf-panel';
+  el.style.cssText = [
+    'position:fixed',
+    'top:56px',
+    'left:8px',
+    'z-index:120',
+    'padding:8px 10px',
+    'max-width:min(86vw, 520px)',
+    'max-height:60vh',
+    'overflow:auto',
+    'white-space:pre',
+    'font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace',
+    'background:rgba(15,15,15,0.88)',
+    'color:#e9f0ff',
+    'border:1px solid rgba(145,170,210,0.45)',
+    'border-radius:6px',
+    'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
+    'pointer-events:auto',
+    'user-select:none',
+    'touch-action:none',
+    'cursor:move',
+    'display:none',
+  ].join(';');
+  const clampPanel = () => {
+    if (!perf.panelEl) return;
+    const margin = 6;
+    const maxX = Math.max(margin, window.innerWidth - perf.panelEl.offsetWidth - margin);
+    const maxY = Math.max(margin, window.innerHeight - perf.panelEl.offsetHeight - margin);
+    if (perf.panelX === null || perf.panelY === null) return;
+    perf.panelX = Math.max(margin, Math.min(maxX, perf.panelX));
+    perf.panelY = Math.max(margin, Math.min(maxY, perf.panelY));
+    perf.panelEl.style.left = `${perf.panelX}px`;
+    perf.panelEl.style.top = `${perf.panelY}px`;
+    perf.panelEl.style.right = 'auto';
+  };
+  el.addEventListener('pointerdown', (e) => {
+    perf.panelDragging = true;
+    const rect = el.getBoundingClientRect();
+    perf.panelDragDx = e.clientX - rect.left;
+    perf.panelDragDy = e.clientY - rect.top;
+    perf.panelX = rect.left;
+    perf.panelY = rect.top;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!perf.panelDragging) return;
+    perf.panelX = e.clientX - perf.panelDragDx;
+    perf.panelY = e.clientY - perf.panelDragDy;
+    clampPanel();
+  });
+  const stopDrag = (e) => {
+    if (!perf.panelDragging) return;
+    perf.panelDragging = false;
+    try {
+      el.releasePointerCapture(e.pointerId);
+    } catch {}
+  };
+  el.addEventListener('pointerup', stopDrag);
+  el.addEventListener('pointercancel', stopDrag);
+  window.addEventListener('resize', clampPanel);
+  document.body.appendChild(el);
+  perf.panelEl = el;
+  return el;
+}
+
+function setDevMode(enabled) {
+  perf.devMode = enabled;
+  const panel = ensurePerfPanel();
+  panel.style.display = enabled ? 'block' : 'none';
+  renderPerfPanel();
+}
+
+function recordPreviewPerf(sample) {
+  if (sample.sourceCacheHit) perf.previewSourceCacheHits++;
+  else perf.previewSourceCacheMisses++;
+  pushPerfSample(perf.previewSamples, sample);
+  perf.previewFrameTs.push(performance.now());
+  perf.sampleCounter++;
+  if (perf.sampleCounter % 30 === 0) {
+    console.log('[perf][preview]', sample);
+  }
+  renderPerfPanel();
+}
+
+function recordExportPerf(sample) {
+  pushPerfSample(perf.exportSamples, sample);
+  console.log('[perf][export]', sample);
+  renderPerfPanel();
+}
+
 // Preset styles
 const PRESETS = {
   classic: {
@@ -454,9 +633,12 @@ const FILTERS = {
       const dy1 = Math.round(dirY * shift1);
       const dy2 = Math.round(dirY * shift2);
       const wobbleAmp = 2.3 * t * pixelScale;
+      const wobbleScale = Math.max(0.0001, pixelScale);
 
       for (let y = 0; y < h; y++) {
-        const wobble = Math.round(Math.sin(y * 0.08) * wobbleAmp);
+        // Anchor wobble frequency to display-space rows so preview/export match
+        // even when they run on different pixel grids.
+        const wobble = Math.round(Math.sin((y / wobbleScale) * 0.08) * wobbleAmp);
         const yBase = y * w * 4;
         const g1y = y + dy1 < 0 ? 0 : y + dy1 >= h ? h - 1 : y + dy1;
         const g2y = y - dy2 < 0 ? 0 : y - dy2 >= h ? h - 1 : y - dy2;
@@ -585,6 +767,7 @@ function ensureFilterWorker() {
       }
     };
     worker.onerror = (event) => {
+      perf.workerErrors++;
       for (const [, pending] of _filterWorkerPending) {
         pending.reject(new Error(event?.message || 'Filter worker failed'));
       }
@@ -601,13 +784,18 @@ function ensureFilterWorker() {
   }
 }
 
-async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelScale = 1) {
-  if (name === 'none') return imgData.data;
+async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelScale = 1, opts = {}) {
+  if (name === 'none') return { data: imgData.data, usedWorker: false, fellBack: false };
+  if (opts.forceMainThread) {
+    const scratch = getFilterScratch(name, imgData.data.length);
+    FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
+    return { data: imgData.data, usedWorker: false, fellBack: false };
+  }
   const worker = ensureFilterWorker();
   if (!worker) {
     const scratch = getFilterScratch(name, imgData.data.length);
     FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
-    return imgData.data;
+    return { data: imgData.data, usedWorker: false, fellBack: false };
   }
   // Keep the source ImageData buffer intact; send a copy to the worker.
   // If worker execution fails, we can safely fall back to main-thread apply.
@@ -617,6 +805,7 @@ async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelSc
     const out = await new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         _filterWorkerPending.delete(id);
+        perf.workerTimeouts++;
         reject(new Error('Filter worker timed out'));
       }, 4000);
       _filterWorkerPending.set(id, {
@@ -640,16 +829,17 @@ async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelSc
         buffer: input.buffer,
       }, [input.buffer]);
     });
-    return out;
+    return { data: out, usedWorker: true, fellBack: false };
   } catch {
     // Disable broken/hung worker and continue with deterministic fallback.
+    perf.workerFallbacks++;
     try {
       _filterWorker?.terminate();
     } catch {}
     _filterWorker = null;
     const scratch = getFilterScratch(name, imgData.data.length);
     FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
-    return imgData.data;
+    return { data: imgData.data, usedWorker: false, fellBack: true };
   }
 }
 
@@ -870,6 +1060,7 @@ function loadImageFile(file, opts = {}) {
         state.imageNaturalW = baseImage.naturalWidth;
         state.imageNaturalH = baseImage.naturalHeight;
         state.imageLoaded = true;
+        markPreviewSourceDirty();
         showEditor();
       };
       baseImage.onerror = () => {
@@ -1000,6 +1191,7 @@ function showEditor() {
   state.textFields = [];
   state.selectedField = null;
   state.lastStyle = null;
+  markPreviewSourceDirty();
   // Always start on the Typography tab when opening the editor
   switchPanelTab('typography');
   updatePanel();
@@ -1071,6 +1263,13 @@ function showUpload() {
   _previewRenderedSeq = 0;
   _previewRenderInFlight = false;
   _previewRenderPending = false;
+  previewSourceCache.data = null;
+  previewSourceCache.w = 0;
+  previewSourceCache.h = 0;
+  previewSourceCache.key = '';
+  previewSourceCache.dirty = true;
+  perf.previewSourceCacheHits = 0;
+  perf.previewSourceCacheMisses = 0;
   setUploadBusy(false);
 }
 
@@ -1320,6 +1519,10 @@ class TextField {
     // Keep text in sync
     this.innerEl.addEventListener('input', () => {
       this.text = this.innerEl.textContent;
+      markPreviewSourceDirty();
+      if (state.filter.applyOnTop) {
+        scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
+      }
     });
 
     // Prevent enter from inserting <div> — use \n instead
@@ -1336,11 +1539,13 @@ class TextField {
     this._applyStyle();
     // Reposition in case font-size changed and element grew
     this._positionEl();
+    markPreviewSourceDirty();
   }
 
   reposition() {
     this._applyStyle(); // pixel size depends on container width; recompute on resize
     this._positionEl();
+    markPreviewSourceDirty();
   }
 
   select() {
@@ -1360,6 +1565,7 @@ function addTextField(xPct, yPct) {
   const tf = new TextField(xPct, yPct, style);
   tf.activePreset = state.lastPreset; // inherit last-used preset (null = manually edited)
   state.textFields.push(tf);
+  markPreviewSourceDirty();
   // Don't call selectField() here — the focus event on innerEl will do it.
   // Use a short timeout so the element is fully laid out before focus.
   tf.el.classList.add('selected'); // show as selected immediately
@@ -1377,6 +1583,7 @@ function deleteField(tf) {
   if (state.selectedField === tf) {
     state.selectedField = null;
   }
+  markPreviewSourceDirty();
   updatePanel();
 }
 
@@ -1392,6 +1599,7 @@ function selectField(tf) {
   }
   state.selectedField = tf;
   tf.select();
+  markPreviewSourceDirty();
   syncTextFieldLayering();
   scheduleImageFilterRender({ settle: true });
   loadFieldStyle(tf);
@@ -1405,6 +1613,7 @@ function deselectAll() {
     state.selectedField.deselect();
     state.selectedField = null;
   }
+  markPreviewSourceDirty();
   syncTextFieldLayering();
   scheduleImageFilterRender({ settle: true });
   updatePanel();
@@ -2002,6 +2211,32 @@ let grainBufferW   = 0;
 let grainBufferH   = 0;
 let grainNoiseTs   = 0;
 
+const previewSourceCache = {
+  dirty: true,
+  w: 0,
+  h: 0,
+  key: '',
+  data: null,
+};
+
+function markPreviewSourceDirty() {
+  previewSourceCache.dirty = true;
+}
+
+function makePreviewSourceCacheKey(w, h) {
+  const selectedId = state.selectedField ? state.selectedField.id : -1;
+  return `${w}x${h}|onTop:${state.filter.applyOnTop ? 1 : 0}|sel:${selectedId}`;
+}
+
+function ensureVaporSrcContext() {
+  if (!vaporSrcCanvas) {
+    vaporSrcCanvas = document.createElement('canvas');
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d', { willReadFrequently: true });
+  } else if (!vaporSrcCtx) {
+    vaporSrcCtx = vaporSrcCanvas.getContext('2d', { willReadFrequently: true });
+  }
+}
+
 function makeOverlayCanvas() {
   const el = document.createElement('canvas');
   el.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
@@ -2181,10 +2416,7 @@ function updateChromaOverlay() {
 
   // Render the exact export filter logic at preview resolution so the editor
   // image matches the saved JPEG (including chroma and scanlines).
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2231,10 +2463,7 @@ function updateSolarpunkOverlay() {
   solarpunkEl.style.display = '';
   solarpunkEl.style.opacity = '1';
 
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2278,10 +2507,7 @@ function updateHegsethOverlay() {
   hegsethEl.style.display = '';
   hegsethEl.style.opacity = '1';
 
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2325,10 +2551,7 @@ function updateMexicoOverlay() {
   mexicoEl.style.display = '';
   mexicoEl.style.opacity = '1';
 
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
@@ -2362,6 +2585,9 @@ function hideLegacyFilterOverlays() {
 
 const PREVIEW_INTERACTION_FPS = 60;
 const PREVIEW_INTERACTION_WINDOW_MS = 160;
+const SETTLE_MODE_MIN_SAMPLES = 16;
+const SETTLE_MODE_TOTAL_MS_HIGH = 26;
+const SETTLE_MODE_FILTER_MS_LOW = 9;
 
 let _previewInteractionUntilTs = 0;
 let _previewSettleRequested = false;
@@ -2381,7 +2607,21 @@ function computePreviewTargetSize(quality = 'settle') {
   };
 }
 
+function pickSettleExecMode() {
+  if (perf.workerErrors > 0 || perf.workerTimeouts > 0) return 'main';
+  if (perf.previewSamples.length < SETTLE_MODE_MIN_SAMPLES) return 'worker';
+  const totalP95 = perfSummary(perf.previewSamples, 'totalMs').p95;
+  const filterP95 = perfSummary(perf.previewSamples, 'filterMs').p95;
+  // If total cost is high but filter work is light, worker round-trip overhead
+  // is likely dominating; prefer main-thread for settle in that case.
+  if (totalP95 >= SETTLE_MODE_TOTAL_MS_HIGH && filterP95 <= SETTLE_MODE_FILTER_MS_LOW) {
+    return 'main';
+  }
+  return 'worker';
+}
+
 async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
+  const previewStartTs = performance.now();
   const name = state.filter.name;
   if (name === 'none') {
     if (finalPreviewEl) finalPreviewEl.style.display = 'none';
@@ -2394,41 +2634,94 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const { w, h } = computePreviewTargetSize(quality);
   const t = state.filter.intensity / 100;
 
-  if (!vaporSrcCanvas) {
-    vaporSrcCanvas = document.createElement('canvas');
-    vaporSrcCtx = vaporSrcCanvas.getContext('2d');
-  }
+  ensureVaporSrcContext();
   if (vaporSrcCanvas.width !== w || vaporSrcCanvas.height !== h) {
     vaporSrcCanvas.width = w;
     vaporSrcCanvas.height = h;
+    markPreviewSourceDirty();
   }
-  vaporSrcCtx.clearRect(0, 0, w, h);
-  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
-  if (state.filter.applyOnTop) {
-    drawPreviewTextLayers(vaporSrcCtx, w, h);
+  const sourceKey = makePreviewSourceCacheKey(w, h);
+  let sourceBuildMs = 0;
+  let sourceCopyMs = 0;
+  let sourceCacheHit = false;
+  let previewData;
+  if (!previewSourceCache.dirty &&
+      previewSourceCache.data &&
+      previewSourceCache.w === w &&
+      previewSourceCache.h === h &&
+      previewSourceCache.key === sourceKey) {
+    sourceCacheHit = true;
+    const sourceCopyStart = performance.now();
+    previewData = vaporSrcCtx.createImageData(w, h);
+    previewData.data.set(previewSourceCache.data);
+    sourceCopyMs = performance.now() - sourceCopyStart;
+  } else {
+    const sourceBuildStart = performance.now();
+    vaporSrcCtx.clearRect(0, 0, w, h);
+    vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+    if (state.filter.applyOnTop) {
+      drawPreviewTextLayers(vaporSrcCtx, w, h);
+    }
+    previewData = vaporSrcCtx.getImageData(0, 0, w, h);
+    sourceBuildMs = performance.now() - sourceBuildStart;
+    previewSourceCache.data = new Uint8ClampedArray(previewData.data);
+    previewSourceCache.w = w;
+    previewSourceCache.h = h;
+    previewSourceCache.key = sourceKey;
+    previewSourceCache.dirty = false;
   }
-  const previewData = vaporSrcCtx.getImageData(0, 0, w, h);
   // Match perceived intensity with export for scale-sensitive filters by
   // compensating for preview downscale. Export uses natural/rendered scale,
   // while preview is displayed back up to rendered size.
   const renderedW = baseImage.offsetWidth || w;
   const pixelScale = renderedW > 0 ? (w / renderedW) : 1;
-  previewData.data.set(await runFilterInWorker(
+  const filterStartTs = performance.now();
+  const settleExecMode = quality === 'settle' ? pickSettleExecMode() : 'main';
+  perf.settleExecMode = settleExecMode;
+  const preferMainThread = quality === 'interactive' || settleExecMode === 'main';
+  const filterResult = await runFilterInWorker(
     name,
     previewData,
     w,
     h,
     t,
     state.filter.params,
-    pixelScale
-  ));
-  if (renderSeq !== _previewRenderSeq) return;
+    pixelScale,
+    { forceMainThread: preferMainThread }
+  );
+  const filterEndTs = performance.now();
+  previewData.data.set(filterResult.data);
+  if (renderSeq !== _previewRenderSeq) {
+    perf.stalePreviewDrops++;
+    renderPerfPanel();
+    return;
+  }
   if (finalPreviewEl.width !== w) finalPreviewEl.width = w;
   if (finalPreviewEl.height !== h) finalPreviewEl.height = h;
   finalPreviewEl.style.display = '';
   finalPreviewEl.style.opacity = '1';
+  const commitStartTs = performance.now();
   const pc = finalPreviewEl.getContext('2d');
   pc.putImageData(previewData, 0, 0);
+  const endTs = performance.now();
+  recordPreviewPerf({
+    filter: name,
+    quality,
+    w,
+    h,
+    queueWaitMs: perf.previewRenderQueueWaitMs,
+    composeMs: sourceBuildMs + sourceCopyMs,
+    sourceBuildMs,
+    sourceCopyMs,
+    sourceCacheHit,
+    filterMs: filterEndTs - filterStartTs,
+    commitMs: endTs - commitStartTs,
+    totalMs: endTs - previewStartTs,
+    worker: filterResult.usedWorker,
+    workerFallback: filterResult.fellBack,
+    mainThread: preferMainThread,
+    settleExecMode,
+  });
 }
 
 async function applyImageFilter(renderSeq, quality = 'settle') {
@@ -2451,9 +2744,15 @@ let _resizeRaf = 0;
 function runScheduledPreviewRender() {
   if (_previewRenderInFlight) {
     _previewRenderPending = true;
+    perf.previewPendingCount = Math.max(perf.previewPendingCount, 1);
+    perf.previewQueueDepthMax = Math.max(perf.previewQueueDepthMax, perf.previewPendingCount);
+    renderPerfPanel();
     return;
   }
   _previewRenderInFlight = true;
+  perf.previewRenderInFlight = 1;
+  perf.previewPendingCount = 0;
+  perf.previewRenderQueueWaitMs = perf.previewInputTs > 0 ? Math.max(0, performance.now() - perf.previewInputTs) : 0;
   const renderSeq = _previewRenderSeq;
   const now = performance.now();
   const isInteractive = !_previewSettleRequested && now < _previewInteractionUntilTs;
@@ -2464,15 +2763,22 @@ function runScheduledPreviewRender() {
     .catch(() => {})
     .finally(() => {
       _previewRenderInFlight = false;
+      perf.previewRenderInFlight = 0;
       _previewRenderedSeq = renderSeq;
       if (_previewRenderPending || _previewRenderedSeq !== _previewRenderSeq) {
         _previewRenderPending = false;
+        perf.previewPendingCount = Math.max(perf.previewPendingCount, 1);
+        perf.previewQueueDepthMax = Math.max(perf.previewQueueDepthMax, perf.previewPendingCount);
         scheduleImageFilterRender();
+      } else {
+        perf.previewPendingCount = 0;
       }
+      renderPerfPanel();
     });
 }
 
 function scheduleImageFilterRender(opts = {}) {
+  perf.previewInputTs = performance.now();
   if (opts.interactive) {
     _previewInteractionUntilTs = performance.now() + PREVIEW_INTERACTION_WINDOW_MS;
   }
@@ -2483,12 +2789,19 @@ function scheduleImageFilterRender(opts = {}) {
   _previewRenderSeq++;
   if (_previewRenderInFlight) {
     _previewRenderPending = true;
+    perf.previewPendingCount = Math.max(perf.previewPendingCount, 1);
+    perf.previewQueueDepthMax = Math.max(perf.previewQueueDepthMax, perf.previewPendingCount);
+    renderPerfPanel();
     return;
   }
   if (_filterRenderRaf || _previewThrottleTimer) return;
+  if (opts.immediate) {
+    runScheduledPreviewRender();
+    return;
+  }
   const now = performance.now();
   const isInteractive = !_previewSettleRequested && now < _previewInteractionUntilTs;
-  if (isInteractive) {
+  if (isInteractive && !opts.noThrottle) {
     const minFrameMs = Math.round(1000 / PREVIEW_INTERACTION_FPS);
     const wait = Math.max(0, minFrameMs - (now - _lastPreviewRenderTs));
     if (wait > 0) {
@@ -2564,62 +2877,63 @@ filterChips.forEach(chip => {
 
 ctrlFilterIntensity.addEventListener('input', () => {
   state.filter.intensity = parseInt(ctrlFilterIntensity.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlFilterOnTop.addEventListener('change', () => {
   state.filter.applyOnTop = ctrlFilterOnTop.checked;
+  markPreviewSourceDirty();
   scheduleImageFilterRender({ settle: true });
 });
 
 ctrlGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlGrain.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlScanlines.addEventListener('input', () => {
   state.filter.params.scanlines = parseInt(ctrlScanlines.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlScanlineSize.addEventListener('input', () => {
   state.filter.params.scanlineSize = parseInt(ctrlScanlineSize.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlChroma.addEventListener('input', () => {
   state.filter.params.chroma = parseInt(ctrlChroma.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlDaGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlDaGrain.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlVignette.addEventListener('input', () => {
   state.filter.params.vignette = parseInt(ctrlVignette.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlBloom.addEventListener('input', () => {
   state.filter.params.bloom = parseInt(ctrlBloom.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlHaze.addEventListener('input', () => {
   state.filter.params.haze = parseInt(ctrlHaze.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlHegsethAngle.addEventListener('input', () => {
   state.filter.params.angle = parseInt(ctrlHegsethAngle.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 ctrlHegsethGhostDistance.addEventListener('input', () => {
   state.filter.params.ghostDistance = parseInt(ctrlHegsethGhostDistance.value);
-  scheduleImageFilterRender({ interactive: true });
+  scheduleImageFilterRender({ interactive: true, immediate: true, noThrottle: true });
 });
 
 [
@@ -2744,7 +3058,7 @@ async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   if (state.filter.name === 'none') return;
   const imgData = ctx.getImageData(0, 0, w, h);
   const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth') ? pixelScale : 1;
-  imgData.data.set(await runFilterInWorker(
+  const result = await runFilterInWorker(
     state.filter.name,
     imgData,
     w,
@@ -2752,8 +3066,10 @@ async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
     state.filter.intensity / 100,
     state.filter.params,
     scaleForFilter
-  ));
+  );
+  imgData.data.set(result.data);
   ctx.putImageData(imgData, 0, 0);
+  return result;
 }
 
 function drawTextLayersForExport(ctx, nw, nh, scale) {
@@ -2766,7 +3082,7 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width  = nw;
   tempCanvas.height = nh;
-  const tc = tempCanvas.getContext('2d');
+  const tc = tempCanvas.getContext('2d', { willReadFrequently: true });
 
   for (const tf of state.textFields) {
     const s = tf.style;
@@ -2823,6 +3139,7 @@ function drawTextLayersForExport(ctx, nw, nh, scale) {
 }
 
 async function renderCurrentImageBlob(options = {}) {
+  const exportStartTs = performance.now();
   const {
     mime = 'image/jpeg',
     quality = 0.93,
@@ -2838,26 +3155,58 @@ async function renderCurrentImageBlob(options = {}) {
 
   exportCanvas.width  = nw;
   exportCanvas.height = nh;
-  const ctx = exportCanvas.getContext('2d');
+  const ctx = exportCanvas.getContext('2d', { willReadFrequently: true });
+  let filterMs = 0;
+  let textMs = 0;
+  let workerUsed = false;
+  let workerFallback = false;
 
   // Draw base image
   ctx.drawImage(img, 0, 0, nw, nh);
 
   // Apply filter before text (default behavior) or after text (on-top mode).
   if (!state.filter.applyOnTop) {
-    await applyActiveFilterToContext(ctx, nw, nh, scale);
+    const t0 = performance.now();
+    const result = await applyActiveFilterToContext(ctx, nw, nh, scale);
+    filterMs += performance.now() - t0;
+    if (result) {
+      workerUsed = workerUsed || !!result.usedWorker;
+      workerFallback = workerFallback || !!result.fellBack;
+    }
   }
 
+  const textStartTs = performance.now();
   drawTextLayersForExport(ctx, nw, nh, scale);
+  textMs += performance.now() - textStartTs;
 
   if (state.filter.applyOnTop) {
-    await applyActiveFilterToContext(ctx, nw, nh, scale);
+    const t0 = performance.now();
+    const result = await applyActiveFilterToContext(ctx, nw, nh, scale);
+    filterMs += performance.now() - t0;
+    if (result) {
+      workerUsed = workerUsed || !!result.usedWorker;
+      workerFallback = workerFallback || !!result.fellBack;
+    }
   }
 
+  const blobStartTs = performance.now();
   const blob = await new Promise(resolve =>
     exportCanvas.toBlob(resolve, mime, quality)
   );
   if (!blob) throw new Error(`Failed to render ${mime} image`);
+  const endTs = performance.now();
+  recordExportPerf({
+    filter: state.filter.name,
+    w: nw,
+    h: nh,
+    filterMs,
+    textMs,
+    encodeMs: endTs - blobStartTs,
+    totalMs: endTs - exportStartTs,
+    worker: workerUsed,
+    workerFallback,
+    applyOnTop: !!state.filter.applyOnTop,
+  });
   return blob;
 }
 
@@ -3120,7 +3469,33 @@ let _saveKeyTapCount = 0;
 let _saveKeyTimer = 0;
 let _copyKeyTapCount = 0;
 let _copyKeyTimer = 0;
+let _devKeyTapCount = 0;
+let _devKeyTimer = 0;
 const ACTION_KEY_DBL_TAP_MS = 800;
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!editorScreen.classList.contains('active')) return;
+  if (e.key.toLowerCase() !== 'd') return;
+  const active = document.activeElement;
+  if (active?.isContentEditable) return;
+  _devKeyTapCount += 1;
+  if (_devKeyTapCount < 2) {
+    if (_devKeyTimer) clearTimeout(_devKeyTimer);
+    _devKeyTimer = setTimeout(() => {
+      _devKeyTapCount = 0;
+      _devKeyTimer = 0;
+    }, ACTION_KEY_DBL_TAP_MS);
+    return;
+  }
+  _devKeyTapCount = 0;
+  if (_devKeyTimer) {
+    clearTimeout(_devKeyTimer);
+    _devKeyTimer = 0;
+  }
+  e.preventDefault();
+  setDevMode(!perf.devMode);
+});
 
 window.addEventListener('keydown', async (e) => {
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -3241,6 +3616,7 @@ window.addEventListener('resize', () => {
     state.textFields.forEach(tf => tf.reposition());
     if (state.imageLoaded) {
       fitImageToWrapper();
+      markPreviewSourceDirty();
       scheduleImageFilterRender({ settle: true });
     }
   });
