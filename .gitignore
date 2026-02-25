@@ -7,6 +7,7 @@ test-results/
 coverage/
 __pycache__/
 *.pyc
+dist-pages/
 
 # LUT trainer generated images
 lut_trainer/**/*.jpg
