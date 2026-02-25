@@ -1298,11 +1298,15 @@ function showUpload() {
   _previewRenderedSeq = 0;
   _previewRenderInFlight = false;
   _previewRenderPending = false;
-  previewSourceCache.data = null;
-  previewSourceCache.w = 0;
-  previewSourceCache.h = 0;
-  previewSourceCache.key = '';
-  previewSourceCache.dirty = true;
+  previewGpuSourceCache.w = 0;
+  previewGpuSourceCache.h = 0;
+  previewGpuSourceCache.key = '';
+  previewGpuSourceCache.dirty = true;
+  previewPixelSourceCache.data = null;
+  previewPixelSourceCache.w = 0;
+  previewPixelSourceCache.h = 0;
+  previewPixelSourceCache.key = '';
+  previewPixelSourceCache.dirty = true;
   perf.previewSourceCacheHits = 0;
   perf.previewSourceCacheMisses = 0;
   setUploadBusy(false);
@@ -1914,15 +1918,18 @@ function selectField(tf) {
   }
   state.selectedObject = tf;
   tf.select();
-  markPreviewSourceDirty();
   syncTextFieldLayering();
-  scheduleImageFilterRender({ settle: true });
+  if (shouldRefreshPreviewForSelectionChange()) {
+    scheduleImageFilterRender({ settle: true });
+  }
   loadFieldStyle(tf);
   updatePanel();
 }
 
 function deselectAll() {
+  let hadSelection = false;
   if (state.selectedObject) {
+    hadSelection = true;
     if (state.selectedObject.type === 'text') {
       state.lastStyle  = { ...state.selectedObject.style };
       state.lastPreset = state.selectedObject.activePreset ?? null;
@@ -1930,9 +1937,10 @@ function deselectAll() {
     state.selectedObject.deselect();
     state.selectedObject = null;
   }
-  markPreviewSourceDirty();
   syncTextFieldLayering();
-  scheduleImageFilterRender({ settle: true });
+  if (hadSelection && shouldRefreshPreviewForSelectionChange()) {
+    scheduleImageFilterRender({ settle: true });
+  }
   updatePanel();
 }
 
@@ -2808,7 +2816,14 @@ const gpuPreview = {
   failed: false,
 };
 
-const previewSourceCache = {
+const previewGpuSourceCache = {
+  dirty: true,
+  w: 0,
+  h: 0,
+  key: '',
+};
+
+const previewPixelSourceCache = {
   dirty: true,
   w: 0,
   h: 0,
@@ -2817,12 +2832,12 @@ const previewSourceCache = {
 };
 
 function markPreviewSourceDirty() {
-  previewSourceCache.dirty = true;
+  previewGpuSourceCache.dirty = true;
+  previewPixelSourceCache.dirty = true;
 }
 
 function makePreviewSourceCacheKey(w, h) {
-  const selectedId = state.selectedObject ? state.selectedObject.id : -1;
-  return `${w}x${h}|onTop:${state.filter.applyOnTop ? 1 : 0}|sel:${selectedId}`;
+  return `${w}x${h}|onTop:${state.filter.applyOnTop ? 1 : 0}`;
 }
 
 function ensureVaporSrcContext() {
@@ -3092,6 +3107,10 @@ function syncTextFieldLayering() {
 
 function isObjectFilterBypassed(tf) {
   return state.filter.applyOnTop && state.selectedObject === tf;
+}
+
+function shouldRefreshPreviewForSelectionChange() {
+  return state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
 }
 
 function drawPreviewObjectLayers(ctx, w, h) {
@@ -3561,10 +3580,10 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   let sourceCacheHit = false;
   const canGpu = canUseGpuPreview(name, quality);
   if (canGpu) {
-    if (!previewSourceCache.dirty &&
-        previewSourceCache.w === w &&
-        previewSourceCache.h === h &&
-        previewSourceCache.key === sourceKey) {
+    if (!previewGpuSourceCache.dirty &&
+        previewGpuSourceCache.w === w &&
+        previewGpuSourceCache.h === h &&
+        previewGpuSourceCache.key === sourceKey) {
       sourceCacheHit = true;
     } else {
       const sourceBuildStart = performance.now();
@@ -3574,11 +3593,10 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
         drawPreviewObjectLayers(vaporSrcCtx, w, h);
       }
       sourceBuildMs = performance.now() - sourceBuildStart;
-      previewSourceCache.data = null;
-      previewSourceCache.w = w;
-      previewSourceCache.h = h;
-      previewSourceCache.key = sourceKey;
-      previewSourceCache.dirty = false;
+      previewGpuSourceCache.w = w;
+      previewGpuSourceCache.h = h;
+      previewGpuSourceCache.key = sourceKey;
+      previewGpuSourceCache.dirty = false;
     }
     if (renderSeq !== _previewRenderSeq) {
       perf.stalePreviewDrops++;
@@ -3613,21 +3631,18 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
       });
       return;
     }
-    hideGpuPreviewOverlay();
-  } else {
-    hideGpuPreviewOverlay();
   }
 
   let previewData;
-  if (!previewSourceCache.dirty &&
-      previewSourceCache.data &&
-      previewSourceCache.w === w &&
-      previewSourceCache.h === h &&
-      previewSourceCache.key === sourceKey) {
+  if (!previewPixelSourceCache.dirty &&
+      previewPixelSourceCache.data &&
+      previewPixelSourceCache.w === w &&
+      previewPixelSourceCache.h === h &&
+      previewPixelSourceCache.key === sourceKey) {
     sourceCacheHit = true;
     const sourceCopyStart = performance.now();
     previewData = vaporSrcCtx.createImageData(w, h);
-    previewData.data.set(previewSourceCache.data);
+    previewData.data.set(previewPixelSourceCache.data);
     sourceCopyMs = performance.now() - sourceCopyStart;
   } else {
     const sourceBuildStart = performance.now();
@@ -3638,11 +3653,15 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
     }
     previewData = vaporSrcCtx.getImageData(0, 0, w, h);
     sourceBuildMs = performance.now() - sourceBuildStart;
-    previewSourceCache.data = new Uint8ClampedArray(previewData.data);
-    previewSourceCache.w = w;
-    previewSourceCache.h = h;
-    previewSourceCache.key = sourceKey;
-    previewSourceCache.dirty = false;
+    previewPixelSourceCache.data = new Uint8ClampedArray(previewData.data);
+    previewPixelSourceCache.w = w;
+    previewPixelSourceCache.h = h;
+    previewPixelSourceCache.key = sourceKey;
+    previewPixelSourceCache.dirty = false;
+    previewGpuSourceCache.w = w;
+    previewGpuSourceCache.h = h;
+    previewGpuSourceCache.key = sourceKey;
+    previewGpuSourceCache.dirty = false;
   }
   // Match perceived intensity with export for scale-sensitive filters by
   // compensating for preview downscale. Export uses natural/rendered scale,
@@ -3680,6 +3699,9 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const commitStartTs = performance.now();
   const pc = finalPreviewEl.getContext('2d');
   pc.putImageData(previewData, 0, 0);
+  // Keep GPU interactive preview visible until settle pixels are committed,
+  // then swap overlays to avoid a flash back to the unfiltered base image.
+  hideGpuPreviewOverlay();
   const endTs = performance.now();
   recordPreviewPerf({
     filter: name,
