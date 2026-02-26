@@ -1102,6 +1102,30 @@ const uploadStatusText = document.getElementById('upload-status-text');
 const DEFAULT_SIZE_MIN = parseFloat(ctrlSize?.min || '1');
 const DEFAULT_SIZE_MAX = parseFloat(ctrlSize?.max || '25');
 
+function randomizeWordmarkFont() {
+  if (!ctrlFont?.options?.length) return;
+  const options = Array.from(ctrlFont.options).filter((opt) => !!opt.value);
+  if (!options.length) return;
+  const choice = options[Math.floor(Math.random() * options.length)];
+  const rawFont = String(choice.value || '').trim();
+  const varMatch = rawFont.match(/^var\((--[^)]+)\)$/);
+  const resolvedFont = varMatch
+    ? (getComputedStyle(document.documentElement).getPropertyValue(varMatch[1]).trim() || rawFont)
+    : rawFont;
+  const wordmarks = document.querySelectorAll('.wordmark, .wordmark-small');
+  if (!wordmarks.length) return;
+  wordmarks.forEach((el) => {
+    el.style.fontFamily = resolvedFont;
+  });
+
+  // Kick font loading early for the selected face; assignment above already
+  // makes the random face visible as soon as it is available.
+  if (document.fonts?.load) {
+    document.fonts.load(`400 32px ${resolvedFont}`, 'Subtext').catch(() => {});
+  }
+}
+randomizeWordmarkFont();
+
 if (baseImage) {
   baseImage.draggable = false;
   baseImage.addEventListener('dragstart', (e) => e.preventDefault());
