@@ -434,6 +434,80 @@ const FILTERS = {
     },
   },
 
+  pixelArt: {
+    label: 'Pixel art',
+    cssPreview: (t) =>
+      `contrast(${1 + 0.2*t}) saturate(${1 + 0.08*t})`,
+    apply(data, w, h, t, params = {}, pixelScale = 1, scratch) {
+      const blend = Math.max(0, Math.min(1, t));
+      if (blend <= 0) return;
+      const bits = Math.max(2, Math.min(8, Math.round(params.bits ?? 5)));
+      const detail = bits / 8;
+      const blockSize = Math.max(
+        1,
+        Math.round((1 + (1 - detail) * 20) * Math.max(1, pixelScale) * (0.35 + 1.65 * blend))
+      );
+      const levels = Math.max(2, Math.round(2 + 0.5 * bits * bits));
+      const qScale = levels - 1;
+      const satBoost = 1 + 0.55 * blend;
+      const contrast = 1 + 0.22 * blend;
+
+      const localScratch = scratch || getFilterScratch('pixelArt', data.length);
+      const orig = localScratch.orig;
+      orig.set(data);
+
+      for (let by = 0; by < h; by += blockSize) {
+        const yEnd = Math.min(h, by + blockSize);
+        for (let bx = 0; bx < w; bx += blockSize) {
+          const xEnd = Math.min(w, bx + blockSize);
+          let sr = 0;
+          let sg = 0;
+          let sb = 0;
+          let count = 0;
+          for (let y = by; y < yEnd; y++) {
+            const row = y * w * 4;
+            for (let x = bx; x < xEnd; x++) {
+              const i = row + x * 4;
+              sr += orig[i];
+              sg += orig[i + 1];
+              sb += orig[i + 2];
+              count++;
+            }
+          }
+          const ar = sr / Math.max(1, count);
+          const ag = sg / Math.max(1, count);
+          const ab = sb / Math.max(1, count);
+          let qr = Math.round((ar / 255) * qScale) * (255 / qScale);
+          let qg = Math.round((ag / 255) * qScale) * (255 / qScale);
+          let qb = Math.round((ab / 255) * qScale) * (255 / qScale);
+          const qLm = 0.299 * qr + 0.587 * qg + 0.114 * qb;
+          qr = qLm + (qr - qLm) * satBoost;
+          qg = qLm + (qg - qLm) * satBoost;
+          qb = qLm + (qb - qLm) * satBoost;
+          qr = (qr - 128) * contrast + 128;
+          qg = (qg - 128) * contrast + 128;
+          qb = (qb - 128) * contrast + 128;
+          const bright = qLm / 255;
+          const shadowW = Math.max(0, 1 - bright * 2.1);
+          const hiW = Math.max(0, (bright - 0.55) / 0.45);
+          qr += (16 * hiW + 5 * blend);
+          qg += (4 * hiW + 2 * blend);
+          qb += (12 * shadowW + 2 * blend);
+
+          for (let y = by; y < yEnd; y++) {
+            const row = y * w * 4;
+            for (let x = bx; x < xEnd; x++) {
+              const i = row + x * 4;
+              data[i] = clamp255(orig[i] * (1 - blend) + qr * blend);
+              data[i + 1] = clamp255(orig[i + 1] * (1 - blend) + qg * blend);
+              data[i + 2] = clamp255(orig[i + 2] * (1 - blend) + qb * blend);
+            }
+          }
+        }
+      }
+    },
+  },
+
   twilight: {
     label: 'Twilight',
     cssPreview: (t) =>
@@ -771,6 +845,7 @@ const FILTER_PARAM_DEFAULTS = {
   film:        { grain: 10 },
   redshift:    {},
   dithering:   {},
+  pixelArt:    { bits: 5 },
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
   twilight:    {},
   mexico:      {},
@@ -2972,6 +3047,7 @@ const filterVaporControls  = document.getElementById('filter-vaporwave-controls'
 const filterDarkAcadControls = document.getElementById('filter-darkacademia-controls');
 const filterSolarpunkControls = document.getElementById('filter-solarpunk-controls');
 const filterHegsethControls = document.getElementById('filter-hegseth-controls');
+const filterPixelArtControls = document.getElementById('filter-pixelart-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
 const ctrlScanlineSize     = document.getElementById('ctrl-scanline-size');
@@ -2982,6 +3058,7 @@ const ctrlBloom            = document.getElementById('ctrl-bloom');
 const ctrlHaze             = document.getElementById('ctrl-haze');
 const ctrlHegsethAngle     = document.getElementById('ctrl-hegseth-angle');
 const ctrlHegsethGhostDistance = document.getElementById('ctrl-hegseth-ghost-distance');
+const ctrlPixelBits        = document.getElementById('ctrl-pixel-bits');
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
 // Film: random grain canvas  (mix-blend-mode: overlay)
@@ -3003,7 +3080,7 @@ let grainBuffer    = null;
 let grainBufferW   = 0;
 let grainBufferH   = 0;
 let grainNoiseTs   = 0;
-const GPU_PREVIEW_FILTERS = new Set(['vaporwave', 'hegseth']);
+const GPU_PREVIEW_FILTERS = new Set(['vaporwave', 'hegseth', 'pixelArt']);
 const gpuPreview = {
   gl: null,
   program: null,
@@ -3146,6 +3223,7 @@ uniform float u_scanlines;
 uniform float u_scanlineSize;
 uniform float u_angle;
 uniform float u_ghostDistance;
+uniform float u_bits;
 uniform float u_pixelScale;
 
 float sat(float x) { return clamp(x, 0.0, 1.0); }
@@ -3204,12 +3282,38 @@ vec3 applyHegseth(vec2 uv) {
   return mix(src.rgb, mixed, t);
 }
 
+vec3 applyPixelArt(vec2 uv) {
+  vec3 src = texture2D(u_tex, uv).rgb;
+  float t = u_intensity;
+  float bits = clamp(u_bits, 2.0, 8.0);
+  float detail = bits / 8.0;
+  float blockPx = max(1.0, (1.0 + (1.0 - detail) * 20.0) * max(1.0, u_pixelScale) * (0.35 + 1.65 * t));
+  vec2 blockUV = max(vec2(u_texel.x * blockPx, u_texel.y * blockPx), u_texel);
+  vec2 snapped = floor(uv / blockUV) * blockUV + blockUV * 0.5;
+  vec3 sampled = texture2D(u_tex, snapped).rgb;
+  float levels = max(2.0, floor(2.0 + 0.5 * bits * bits));
+  float qScale = levels - 1.0;
+  vec3 quant = floor(sampled * qScale + 0.5) / qScale;
+  float qLm = dot(quant, vec3(0.299, 0.587, 0.114));
+  float satBoost = 1.0 + 0.55 * t;
+  float contrast = 1.0 + 0.22 * t;
+  quant = vec3(qLm) + (quant - vec3(qLm)) * satBoost;
+  quant = (quant - vec3(0.5)) * contrast + vec3(0.5);
+  float shadowW = max(0.0, 1.0 - qLm * 2.1);
+  float hiW = max(0.0, (qLm - 0.55) / 0.45);
+  quant += vec3(0.0627 * hiW + 0.0196 * t, 0.0157 * hiW + 0.0078 * t, 0.0471 * shadowW + 0.0078 * t);
+  quant = clamp(quant, 0.0, 1.0);
+  return mix(src, quant, t);
+}
+
 void main() {
   vec3 c = texture2D(u_tex, v_uv).rgb;
   if (u_filterType < 1.5) {
     c = applyVaporwave(v_uv);
-  } else {
+  } else if (u_filterType < 2.5) {
     c = applyHegseth(v_uv);
+  } else {
+    c = applyPixelArt(v_uv);
   }
   gl_FragColor = vec4(sat(c.r), sat(c.g), sat(c.b), 1.0);
 }
@@ -3249,6 +3353,7 @@ void main() {
       uScanlineSize: gl.getUniformLocation(program, 'u_scanlineSize'),
       uAngle: gl.getUniformLocation(program, 'u_angle'),
       uGhostDistance: gl.getUniformLocation(program, 'u_ghostDistance'),
+      uBits: gl.getUniformLocation(program, 'u_bits'),
       uPixelScale: gl.getUniformLocation(program, 'u_pixelScale'),
     };
 
@@ -3280,13 +3385,14 @@ function renderGpuPreviewFilter(sourceCanvas, w, h, name, intensity, params, pix
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
   gl.uniform1i(gpuPreview.loc.uTex, 0);
   gl.uniform2f(gpuPreview.loc.uTexel, 1 / Math.max(1, w), 1 / Math.max(1, h));
-  gl.uniform1f(gpuPreview.loc.uFilterType, name === 'hegseth' ? 2 : 1);
+  gl.uniform1f(gpuPreview.loc.uFilterType, name === 'hegseth' ? 2 : name === 'pixelArt' ? 3 : 1);
   gl.uniform1f(gpuPreview.loc.uIntensity, intensity);
   gl.uniform1f(gpuPreview.loc.uChroma, params?.chroma ?? 20);
   gl.uniform1f(gpuPreview.loc.uScanlines, params?.scanlines ?? 60);
   gl.uniform1f(gpuPreview.loc.uScanlineSize, params?.scanlineSize ?? 2);
   gl.uniform1f(gpuPreview.loc.uAngle, params?.angle ?? 0);
   gl.uniform1f(gpuPreview.loc.uGhostDistance, params?.ghostDistance ?? 50);
+  gl.uniform1f(gpuPreview.loc.uBits, params?.bits ?? 5);
   gl.uniform1f(gpuPreview.loc.uPixelScale, pixelScale);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
   return !gl.getError();
@@ -4082,6 +4188,7 @@ function updateVibeExtraControls() {
   filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
   filterSolarpunkControls.classList.toggle('hidden', name !== 'solarpunk');
   filterHegsethControls.classList.toggle('hidden', name !== 'hegseth');
+  filterPixelArtControls.classList.toggle('hidden', name !== 'pixelArt');
   ctrlFilterOnTop.checked = !!state.filter.applyOnTop;
 }
 
@@ -4121,6 +4228,8 @@ filterChips.forEach(chip => {
     } else if (state.filter.name === 'hegseth') {
       ctrlHegsethAngle.value = state.filter.params.angle;
       ctrlHegsethGhostDistance.value = state.filter.params.ghostDistance;
+    } else if (state.filter.name === 'pixelArt') {
+      ctrlPixelBits.value = state.filter.params.bits;
     }
     updateVibeExtraControls();
     scheduleImageFilterRender({ settle: true });
@@ -4188,6 +4297,11 @@ ctrlHegsethGhostDistance.addEventListener('input', () => {
   scheduleImageFilterRender({ interactive: true });
 });
 
+ctrlPixelBits.addEventListener('input', () => {
+  state.filter.params.bits = parseInt(ctrlPixelBits.value);
+  scheduleImageFilterRender({ interactive: true });
+});
+
 [
   ctrlFilterIntensity,
   ctrlGrain,
@@ -4200,6 +4314,7 @@ ctrlHegsethGhostDistance.addEventListener('input', () => {
   ctrlHaze,
   ctrlHegsethAngle,
   ctrlHegsethGhostDistance,
+  ctrlPixelBits,
 ].forEach((el) => {
   if (!el) return;
   el.addEventListener('change', () => {
@@ -4318,7 +4433,7 @@ function softBlur(ctx, w, h, radius) {
 async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   if (state.filter.name === 'none') return;
   const imgData = ctx.getImageData(0, 0, w, h);
-  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth' || state.filter.name === 'dithering') ? pixelScale : 1;
+  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth' || state.filter.name === 'dithering' || state.filter.name === 'pixelArt') ? pixelScale : 1;
   const result = await runFilterInWorker(
     state.filter.name,
     imgData,
