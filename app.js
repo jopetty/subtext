@@ -255,6 +255,32 @@ const PRESETS = {
     outlineWidth: 3,
     blur:         0,
   },
+  deco: {
+    font:         "var(--font-limelight)",
+    size:         5,
+    lineHeight:   1.2,
+    rotateDeg:    0,
+    weight:       '400',
+    italic:       false,
+    align:        'center',
+    fgColor:      '#fff4dd',
+    outlineColor: '#2b1a0c',
+    outlineWidth: 2,
+    blur:         0,
+  },
+  nouveau: {
+    font:         "var(--font-amarante)",
+    size:         5,
+    lineHeight:   1.2,
+    rotateDeg:    0,
+    weight:       '400',
+    italic:       false,
+    align:        'center',
+    fgColor:      '#e9784a',
+    outlineColor: '#241710',
+    outlineWidth: 2,
+    blur:         0,
+  },
 };
 
 // ─── Image vibes ───────────────────────────────────────────────────────────────
