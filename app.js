@@ -278,7 +278,7 @@ const PRESETS = {
     align:        'center',
     fgColor:      '#e9784a',
     outlineColor: '#241710',
-    outlineWidth: 2,
+    outlineWidth: 5,
     blur:         0,
   },
 };
