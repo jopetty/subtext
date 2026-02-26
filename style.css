@@ -295,6 +295,10 @@
   --panel-h:   248px;
   --top-bar-h: 52px;
   --radius:    6px;
+  --panel-space-1: 0.22rem;
+  --panel-space-2: 0.42rem;
+  --panel-space-3: 0.62rem;
+  --panel-control-h: 32px;
   --font-ui:   'Saira', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
   --font-serif: 'Garamontio', 'EB Garamond', Garamond, 'Times New Roman', serif;
 
@@ -1060,19 +1064,19 @@ html, body {
 
 .controls-row {
   display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
+  align-items: center;
+  gap: var(--panel-space-2);
   flex-wrap: nowrap;
 }
 
 .control-label {
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.08em;
   color: var(--ink-muted);
   white-space: nowrap;
   display: block;
-  margin-bottom: 3px;
+  margin-bottom: 0;
   font-family: var(--font-ui);
   font-weight: 500;
 }
@@ -1080,6 +1084,7 @@ html, body {
 .control-group {
   display: flex;
   flex-direction: column;
+  gap: var(--panel-space-1);
 }
 
 /* ── Presets row ── */
@@ -1113,11 +1118,19 @@ html, body {
 }
 
 .controls-row--paint {
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
 }
 
 .controls-row--paint .control-group--size {
   flex: 1;
+}
+
+.controls-row--object {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
 }
 
 .chip-scroller {
@@ -1165,7 +1178,7 @@ html, body {
 .controls-row--typeface {
   flex-direction: column;
   align-items: stretch;
-  gap: 0.28rem;
+  gap: var(--panel-space-1);
 }
 
 .typeface-row {
@@ -1198,10 +1211,10 @@ html, body {
   border-radius: var(--radius);
   background: var(--bg);
   color: var(--ink);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   width: 100%;
-  height: 36px;
-  padding: 0.28rem 0.55rem;
+  height: var(--panel-control-h);
+  padding: 0.2rem 0.45rem;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1270,8 +1283,8 @@ html, body {
   border-radius: var(--radius);
   background: var(--bg);
   color: var(--ink);
-  width: 36px;
-  height: 36px;
+  width: var(--panel-control-h);
+  height: var(--panel-control-h);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1296,8 +1309,10 @@ html, body {
 /* ── Size + Align row ── */
 
 .controls-row--size-align {
-  align-items: flex-end;
-  gap: 0.85rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--panel-space-2);
 }
 
 .control-group--size {
@@ -1314,8 +1329,8 @@ html, body {
 .row-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 3px;
+  align-items: center;
+  margin-bottom: 0;
 }
 
 .row-header .control-label {
@@ -1331,25 +1346,26 @@ html, body {
 /* ── Colors + Stroke row ── */
 
 .controls-row--colors {
-  align-items: flex-end;
-  gap: 0.7rem;
+  align-items: start;
+  gap: var(--panel-space-2);
 }
 
 .colors-left {
   display: flex;
-  gap: 0.55rem;
+  gap: var(--panel-space-2);
   flex-shrink: 0;
-  align-items: flex-end;
+  align-items: start;
 }
 
 .cycle-btn {
   width: 24px;
   height: 24px;
   padding: 0;
-  margin-bottom: 5px;
+  margin: 0;
   flex-shrink: 0;
   border: 0;
   background: transparent;
+  align-self: center;
 }
 
 .cycle-btn img {
@@ -1387,15 +1403,15 @@ input[type="color"] {
 }
 
 select {
-  padding: 0.28rem 0.4rem;
+  padding: 0.2rem 0.35rem;
   width: 100%;
   cursor: pointer;
-  height: 36px;
+  height: var(--panel-control-h);
 }
 
 input[type="color"] {
-  width: 40px;
-  height: 36px;
+  width: 36px;
+  height: var(--panel-control-h);
   padding: 2px 3px;
   cursor: pointer;
 }
@@ -1403,8 +1419,8 @@ input[type="color"] {
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  /* Match the height of color inputs (36px) so all controls on a row align. */
-  height: 36px;
+  /* Match the height of color inputs so mixed-control rows center correctly. */
+  height: var(--panel-control-h);
   background: transparent;
   outline: none;
   cursor: pointer;
@@ -1447,7 +1463,14 @@ input[type="range"]::-moz-range-thumb {
 /* Full-width standalone sliders (Size, Intensity, Grain, Scanlines, Chroma)
    can be shorter than the 36px needed to align with color pickers. */
 .control-group--size input[type="range"] {
-  height: 28px;
+  height: 24px;
+}
+
+.controls-row--object .control-group--size input[type="range"],
+.controls-row--paint .control-group--size input[type="range"],
+.controls-row--size-align .control-group--size input[type="range"],
+.controls-row--colors .control-group--stroke input[type="range"] {
+  height: var(--panel-control-h);
 }
 
 .vibe-layer-toggle {
@@ -1570,8 +1593,8 @@ input[type="range"]::-moz-range-thumb {
   background: var(--bg);
   color: var(--ink);
   font-size: 1rem;
-  width: 36px;
-  height: 36px;
+  width: var(--panel-control-h);
+  height: var(--panel-control-h);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1982,7 +2005,8 @@ input[type="range"]::-moz-range-thumb {
     height: auto;          /* fill the grid row */
     border-top: none;
     border-left: 1px solid var(--border);
-    padding: 1.1rem 1rem;
+    padding: 0.8rem 0.85rem;
+    gap: 0;
     justify-content: flex-start;
     overflow-y: auto;
   }
@@ -1997,13 +2021,28 @@ input[type="range"]::-moz-range-thumb {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    /* Negative margin counteracts the flex gap so the heading sits
-       close to its first content row */
-    margin-bottom: -0.7rem;
+    min-height: 30px;
+    margin: 0;
   }
 
-  .panel-section.is-collapsed .section-heading-row {
-    margin-bottom: 0;
+  .panel-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .panel-section-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--panel-space-3);
+    padding-bottom: var(--panel-space-3);
+  }
+
+  #bottom-panel .control-group > .control-label,
+  #bottom-panel .row-header {
+    min-height: 0.72rem;
+    display: flex;
+    align-items: center;
   }
 
   .panel-section.is-collapsed .panel-section-body {
@@ -2020,9 +2059,9 @@ input[type="range"]::-moz-range-thumb {
 
   .object-add-btn--desktop {
     display: inline-flex;
-    width: 30px;
-    min-width: 30px;
-    height: 30px;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
     padding: 0;
     gap: 0;
   }
@@ -2032,16 +2071,16 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .section-heading-row--object {
-    position: relative;
-    justify-content: flex-start;
-    padding-right: 36px;
+    position: static;
+    justify-content: space-between;
+    padding-right: 0;
   }
 
   .section-heading-row--object .object-add-btn--desktop {
-    position: absolute;
-    top: 50%;
-    right: 0;
-    transform: translateY(-50%);
+    position: static;
+    top: auto;
+    right: auto;
+    transform: none;
   }
 
   .paint-toggle-row {
@@ -2050,9 +2089,9 @@ input[type="range"]::-moz-range-thumb {
 
   .paint-toggle-btn--desktop {
     display: inline-flex;
-    width: 30px;
-    min-width: 30px;
-    height: 30px;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
     padding: 0;
     gap: 0;
   }
@@ -2062,21 +2101,21 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .section-heading-row--paint {
-    position: relative;
-    justify-content: flex-start;
-    padding-right: 36px;
+    position: static;
+    justify-content: space-between;
+    padding-right: 0;
   }
 
   .section-heading-row--paint .paint-toggle-btn--desktop {
-    position: absolute;
-    top: 50%;
-    right: 0;
-    transform: translateY(-50%);
+    position: static;
+    top: auto;
+    right: auto;
+    transform: none;
   }
 
   .section-divider {
     display: block;
-    margin: 0.75rem 0 0;
+    margin: var(--panel-space-1) 0;
   }
 
   #font-controls,
@@ -2088,7 +2127,7 @@ input[type="range"]::-moz-range-thumb {
     justify-content: flex-start;
     display: flex;
     flex-direction: column;
-    gap: 1.05rem;
+    gap: 0;
     overflow-y: visible; /* sidebar itself scrolls */
   }
 
