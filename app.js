@@ -275,7 +275,7 @@ const PRESETS = {
     rotateDeg:    0,
     weight:       '400',
     italic:       false,
-    align:        'center',
+    align:        'left',
     fgColor:      '#e9784a',
     outlineColor: '#241710',
     outlineWidth: 5,
@@ -1099,6 +1099,8 @@ const alignBtns        = document.querySelectorAll('.align-btn');
 const presetBtns       = document.querySelectorAll('.preset-chip');
 const uploadStatus     = document.getElementById('upload-status');
 const uploadStatusText = document.getElementById('upload-status-text');
+const DEFAULT_SIZE_MIN = parseFloat(ctrlSize?.min || '1');
+const DEFAULT_SIZE_MAX = parseFloat(ctrlSize?.max || '25');
 
 if (baseImage) {
   baseImage.draggable = false;
@@ -1682,9 +1684,22 @@ class TextObject {
     this.style = { lineHeight: 1.2, rotateDeg: 0, ...style };
     this.text = '';
     this.autoContrastStep = 0;
+    this._pendingAnchorWidthPx = null;
     this.el = null;
     this.innerEl = null;
     this._build();
+  }
+
+  _shiftXPctForAnchorWidth(prevWidthPx, nextWidthPx, align = this.style.align) {
+    const cw = Math.max(1, canvasContainer.offsetWidth || 1);
+    const delta = (nextWidthPx - prevWidthPx) || 0;
+    if (Math.abs(delta) < 0.01) return;
+    if (align === 'left') {
+      this.xPct += (delta * 0.5) / cw;
+    } else if (align === 'right') {
+      this.xPct -= (delta * 0.5) / cw;
+    }
+    this.xPct = Math.max(0, Math.min(1, this.xPct));
   }
 
   _build() {
@@ -1856,8 +1871,16 @@ class TextObject {
     });
 
     // Keep text in sync
+    this.innerEl.addEventListener('beforeinput', () => {
+      this._pendingAnchorWidthPx = this.innerEl.offsetWidth || 0;
+    });
+
     this.innerEl.addEventListener('input', () => {
+      const prevWidth = this._pendingAnchorWidthPx ?? (this.innerEl.offsetWidth || 0);
       this.text = this.innerEl.textContent;
+      this._pendingAnchorWidthPx = null;
+      this._shiftXPctForAnchorWidth(prevWidth, this.innerEl.offsetWidth || 0);
+      this._positionEl();
       markPreviewSourceDirty();
       if (state.filter.applyOnTop) {
         scheduleImageFilterRender({ interactive: true });
@@ -1874,8 +1897,10 @@ class TextObject {
   }
 
   updateStyle(patch) {
+    const prevWidth = this.innerEl?.offsetWidth || 0;
     Object.assign(this.style, patch);
     this._applyStyle();
+    this._shiftXPctForAnchorWidth(prevWidth, this.innerEl?.offsetWidth || 0);
     // Reposition in case font-size changed and element grew
     this._positionEl();
     markPreviewSourceDirty();
@@ -2057,11 +2082,13 @@ class ImageObject {
 
   updateStyle(patch) {
     Object.assign(this.style, patch);
-    const minSize = parseFloat(ctrlSize?.min || '1');
-    const maxSize = parseFloat(ctrlSize?.max || '25');
-    this.style.size = Math.max(minSize, Math.min(maxSize, this.style.size || DROPPED_IMAGE_OBJECT_SIZE_PCT));
+    if (Object.prototype.hasOwnProperty.call(patch, 'size')) {
+      const { min: minSize, max: maxSize } = getObjectSizeBounds(this, { keepCurrent: false });
+      this.style.size = Math.max(minSize, Math.min(maxSize, this.style.size || DROPPED_IMAGE_OBJECT_SIZE_PCT));
+    }
     this._applyStyle();
     this._positionEl();
+    if (state.selectedObject === this) syncSizeControlBoundsForObject(this);
     markPreviewSourceDirty();
   }
 
@@ -2450,6 +2477,7 @@ function startDrag(e, tf, opts = {}) {
     ({ pos: tf.yPct, snap: snapY } = snapAxis(rawY, snapY));
 
     tf.repositionFast?.();
+    if (state.selectedObject === tf) syncSizeControlBoundsForObject(tf);
     showGuides(true, snapX, snapY);
   }
 
@@ -2473,6 +2501,41 @@ function startDrag(e, tf, opts = {}) {
   window.addEventListener('pointermove', onMove, { passive: false });
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
+}
+
+function getObjectSizeBounds(obj = state.selectedObject, opts = {}) {
+  const keepCurrent = opts.keepCurrent !== false;
+  const min = DEFAULT_SIZE_MIN;
+  if (!obj || obj.type !== 'image') {
+    return { min, max: DEFAULT_SIZE_MAX };
+  }
+
+  const objectAspect = Math.max(0.01, obj.aspect || 1); // width / height
+  const baseAspect = Math.max(
+    0.01,
+    state.imageNaturalW > 0 && state.imageNaturalH > 0
+      ? (state.imageNaturalW / state.imageNaturalH)
+      : ((canvasContainer.offsetWidth || 1) / Math.max(1, canvasContainer.offsetHeight || 1))
+  );
+
+  // Size is width % of base image width. Keep max independent of object
+  // placement; cap by whichever base-image dimension fills first.
+  const maxByWidthPct = 100;
+  const maxByHeightPct = (100 * objectAspect) / baseAspect;
+  const strictMaxPct = Math.max(min, Math.min(maxByWidthPct, maxByHeightPct));
+
+  if (!keepCurrent) return { min, max: strictMaxPct };
+  const currentSize = Number.isFinite(obj.style?.size) ? obj.style.size : min;
+  return { min, max: Math.max(strictMaxPct, currentSize) };
+}
+
+function syncSizeControlBoundsForObject(obj = state.selectedObject) {
+  const bounds = getObjectSizeBounds(obj);
+  if (ctrlSize) {
+    ctrlSize.min = String(bounds.min);
+    ctrlSize.max = String(bounds.max);
+  }
+  return bounds;
 }
 
 function startRotate(e, tf) {
@@ -2518,16 +2581,12 @@ function startRotate(e, tf) {
 }
 
 function startResize(e, tf) {
-  const getObjectSizeBounds = () => ({
-    min: parseFloat(ctrlSize?.min || '1'),
-    max: parseFloat(ctrlSize?.max || '25'),
-  });
   const rect = canvasContainer.getBoundingClientRect();
   const centerX = rect.left + tf.xPct * canvasContainer.offsetWidth;
   const centerY = rect.top + tf.yPct * canvasContainer.offsetHeight;
   const startDist = Math.max(1, Math.hypot(e.clientX - centerX, e.clientY - centerY));
   const origSize = tf.style.size || 5;
-  const { min: minSize, max: maxSize } = getObjectSizeBounds();
+  const { min: minSize, max: maxSize } = getObjectSizeBounds(tf, { keepCurrent: false });
   tf.el.classList.add('resizing');
 
   function onMove(ev) {
@@ -2580,6 +2639,7 @@ function setTextControlsDisabled(disabled) {
 function updatePanel() {
   const selectedText = getSelectedTextObject();
   const nonTextSelected = !!state.selectedObject && !selectedText;
+  syncSizeControlBoundsForObject();
   setTextControlsDisabled(nonTextSelected);
   if (ctrlAutoContrast) {
     ctrlAutoContrast.disabled = !selectedText;
@@ -2618,10 +2678,12 @@ function syncTextControlsToStyle(s, activePreset) {
 }
 
 function loadFieldStyle(tf) {
+  const { min: minSize, max: maxSize } = syncSizeControlBoundsForObject(tf);
   syncObjectControlsToStyle(tf.style || {});
   if (ctrlSize && typeof tf?.style?.size === 'number') {
-    ctrlSize.value = String(tf.style.size);
-    if (ctrlSizeVal) ctrlSizeVal.textContent = `${tf.style.size}%`;
+    const size = Math.max(minSize, Math.min(maxSize, tf.style.size));
+    ctrlSize.value = String(size);
+    if (ctrlSizeVal) ctrlSizeVal.textContent = `${size}%`;
   }
   if (tf.type === 'text') {
     syncTextControlsToStyle(tf.style, tf.activePreset);
@@ -5238,6 +5300,7 @@ window.addEventListener('keydown', (e) => {
   obj.xPct = Math.max(0, Math.min(1, obj.xPct + (dxPx / cw)));
   obj.yPct = Math.max(0, Math.min(1, obj.yPct + (dyPx / ch)));
   obj.repositionFast?.();
+  syncSizeControlBoundsForObject(obj);
   markPreviewSourceDirty();
   scheduleImageFilterRender({ interactive: true });
 });
