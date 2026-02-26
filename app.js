@@ -605,68 +605,154 @@ const FILTERS = {
     cssPreview: (t) =>
       `contrast(${1 + 0.2*t}) saturate(${1 + 0.08*t})`,
     apply(data, w, h, t, params = {}, pixelScale = 1, scratch) {
-      const blend = Math.max(0, Math.min(1, t));
-      if (blend <= 0) return;
+      const style = Math.max(0, Math.min(1, t));
       const bits = Math.max(2, Math.min(8, Math.round(params.bits ?? 5)));
       const detail = bits / 8;
       const blockSize = Math.max(
         1,
-        Math.round((1 + (1 - detail) * 20) * Math.max(1, pixelScale) * (0.35 + 1.65 * blend))
+        Math.round((1 + (1 - detail) * 20) * Math.max(1, pixelScale) * 0.6)
       );
-      const levels = Math.max(2, Math.round(2 + 0.5 * bits * bits));
-      const qScale = levels - 1;
-      const satBoost = 1 + 0.55 * blend;
-      const contrast = 1 + 0.22 * blend;
-
       const localScratch = scratch || getFilterScratch('pixelArt', data.length);
       const orig = localScratch.orig;
       orig.set(data);
+      const bw = Math.max(1, Math.ceil(w / blockSize));
+      const bh = Math.max(1, Math.ceil(h / blockSize));
+      const blockCount = bw * bh;
 
-      for (let by = 0; by < h; by += blockSize) {
-        const yEnd = Math.min(h, by + blockSize);
-        for (let bx = 0; bx < w; bx += blockSize) {
-          const xEnd = Math.min(w, bx + blockSize);
-          let sr = 0;
-          let sg = 0;
-          let sb = 0;
-          let count = 0;
-          for (let y = by; y < yEnd; y++) {
-            const row = y * w * 4;
-            for (let x = bx; x < xEnd; x++) {
-              const i = row + x * 4;
-              sr += orig[i];
-              sg += orig[i + 1];
-              sb += orig[i + 2];
-              count++;
-            }
-          }
-          const ar = sr / Math.max(1, count);
-          const ag = sg / Math.max(1, count);
-          const ab = sb / Math.max(1, count);
-          let qr = Math.round((ar / 255) * qScale) * (255 / qScale);
-          let qg = Math.round((ag / 255) * qScale) * (255 / qScale);
-          let qb = Math.round((ab / 255) * qScale) * (255 / qScale);
-          const qLm = 0.299 * qr + 0.587 * qg + 0.114 * qb;
-          qr = qLm + (qr - qLm) * satBoost;
-          qg = qLm + (qg - qLm) * satBoost;
-          qb = qLm + (qb - qLm) * satBoost;
-          qr = (qr - 128) * contrast + 128;
-          qg = (qg - 128) * contrast + 128;
-          qb = (qb - 128) * contrast + 128;
-          const bright = qLm / 255;
-          const shadowW = Math.max(0, 1 - bright * 2.1);
-          const hiW = Math.max(0, (bright - 0.55) / 0.45);
-          qr += (16 * hiW + 5 * blend);
-          qg += (4 * hiW + 2 * blend);
-          qb += (12 * shadowW + 2 * blend);
+      if (!localScratch.blockSumR || localScratch.blockSumR.length < blockCount) {
+        localScratch.blockSumR = new Float32Array(blockCount);
+        localScratch.blockSumG = new Float32Array(blockCount);
+        localScratch.blockSumB = new Float32Array(blockCount);
+        localScratch.blockN = new Uint16Array(blockCount);
+        localScratch.blockLm = new Float32Array(blockCount);
+        localScratch.blockOutR = new Float32Array(blockCount);
+        localScratch.blockOutG = new Float32Array(blockCount);
+        localScratch.blockOutB = new Float32Array(blockCount);
+      }
 
-          for (let y = by; y < yEnd; y++) {
+      const sumR = localScratch.blockSumR;
+      const sumG = localScratch.blockSumG;
+      const sumB = localScratch.blockSumB;
+      const n = localScratch.blockN;
+      const lm = localScratch.blockLm;
+      const outR = localScratch.blockOutR;
+      const outG = localScratch.blockOutG;
+      const outB = localScratch.blockOutB;
+      sumR.fill(0, 0, blockCount);
+      sumG.fill(0, 0, blockCount);
+      sumB.fill(0, 0, blockCount);
+      n.fill(0, 0, blockCount);
+
+      for (let y = 0; y < h; y++) {
+        const by = Math.min(bh - 1, Math.floor(y / blockSize));
+        const row = y * w * 4;
+        for (let x = 0; x < w; x++) {
+          const bx = Math.min(bw - 1, Math.floor(x / blockSize));
+          const bi = by * bw + bx;
+          const i = row + x * 4;
+          sumR[bi] += orig[i];
+          sumG[bi] += orig[i + 1];
+          sumB[bi] += orig[i + 2];
+          n[bi]++;
+        }
+      }
+
+      const stylePow = Math.pow(style, 0.9);
+      const levelsHi = Math.max(8, Math.round(12 + bits * 3));
+      const levelsLo = Math.max(4, Math.round(4 + bits * 0.75));
+      const levels = Math.max(3, Math.round(levelsHi + (levelsLo - levelsHi) * stylePow));
+      const qScale = levels - 1;
+      const styleHigh = Math.max(0, Math.min(1, (style - 0.78) / 0.22));
+      const satBoost = 1 + 0.95 * style;
+      const contrast = 1 + 0.52 * style;
+      const celLevels = Math.max(3, Math.round(8 + (3 - 8) * Math.pow(style, 0.8)));
+      const celMix = 0.06 + 0.38 * style;
+
+      for (let bi = 0; bi < blockCount; bi++) {
+        const count = Math.max(1, n[bi]);
+        let qr = Math.round(((sumR[bi] / count) / 255) * qScale) * (255 / qScale);
+        let qg = Math.round(((sumG[bi] / count) / 255) * qScale) * (255 / qScale);
+        let qb = Math.round(((sumB[bi] / count) / 255) * qScale) * (255 / qScale);
+
+        const qLm = (0.299 * qr + 0.587 * qg + 0.114 * qb) / 255;
+        lm[bi] = qLm;
+        const celLm = Math.round(qLm * celLevels) / celLevels;
+        qr = qr * (1 - celMix) + celLm * 255 * celMix;
+        qg = qg * (1 - celMix) + celLm * 255 * celMix;
+        qb = qb * (1 - celMix) + celLm * 255 * celMix;
+
+        qr = qLm * 255 + (qr - qLm * 255) * satBoost;
+        qg = qLm * 255 + (qg - qLm * 255) * satBoost;
+        qb = qLm * 255 + (qb - qLm * 255) * satBoost;
+
+        qr = (qr - 128) * contrast + 128;
+        qg = (qg - 128) * contrast + 128;
+        qb = (qb - 128) * contrast + 128;
+
+        const shadowW = Math.max(0, (0.55 - qLm) / 0.55);
+        const hiW = Math.max(0, (qLm - 0.58) / 0.42);
+        const midW = Math.max(0, 1 - shadowW - hiW);
+        const tintAmt = style * (1 - 0.32 * styleHigh);
+        qr += (20 * hiW + 8 * midW - 7 * shadowW) * tintAmt;
+        qg += (7 * hiW + 4 * midW - 6 * shadowW) * tintAmt;
+        qb += (-3 * hiW + 6 * midW + 23 * shadowW) * tintAmt;
+        const highContrast = 1 + 0.18 * styleHigh;
+        qr = (qr - 128) * highContrast + 128 - 8 * styleHigh;
+        qg = (qg - 128) * highContrast + 128 - 8 * styleHigh;
+        qb = (qb - 128) * highContrast + 128 - 8 * styleHigh;
+
+        const gamePop = Math.pow(styleHigh, 0.85);
+        const lmNow = (0.299 * qr + 0.587 * qg + 0.114 * qb);
+        const vib = 1 + 0.42 * gamePop;
+        qr = lmNow + (qr - lmNow) * vib;
+        qg = lmNow + (qg - lmNow) * vib;
+        qb = lmNow + (qb - lmNow) * vib;
+        qr += (13 + 20 * hiW - 8 * shadowW) * gamePop;
+        qg += (5 + 10 * midW - 6 * shadowW) * gamePop;
+        qb += (9 + 14 * hiW + 12 * shadowW) * gamePop;
+
+        outR[bi] = qr;
+        outG[bi] = qg;
+        outB[bi] = qb;
+      }
+
+      const bayer4 = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+      ];
+      const dAmp = (0.01 + 0.045 * style) * (style * (1 - 0.2 * style)) * 255;
+
+      for (let by = 0; by < bh; by++) {
+        const y0 = by * blockSize;
+        const yEnd = Math.min(h, y0 + blockSize);
+        for (let bx = 0; bx < bw; bx++) {
+          const x0 = bx * blockSize;
+          const xEnd = Math.min(w, x0 + blockSize);
+          const bi = by * bw + bx;
+          const cLm = lm[bi];
+          const lL = lm[by * bw + Math.max(0, bx - 1)];
+          const lR = lm[by * bw + Math.min(bw - 1, bx + 1)];
+          const lU = lm[Math.max(0, by - 1) * bw + bx];
+          const lD = lm[Math.min(bh - 1, by + 1) * bw + bx];
+          const grad = Math.max(Math.abs(lR - cLm), Math.abs(lL - cLm), Math.abs(lU - cLm), Math.abs(lD - cLm));
+          const ink = Math.max(0, Math.min(1, (grad - 0.06) / 0.22)) * Math.pow(style, 1.15);
+          const inkMul = 1 - 0.46 * ink;
+          const baseR = outR[bi] * inkMul;
+          const baseG = outG[bi] * inkMul;
+          const baseB = outB[bi] * inkMul;
+
+          for (let y = y0; y < yEnd; y++) {
             const row = y * w * 4;
-            for (let x = bx; x < xEnd; x++) {
+            const py = y & 3;
+            for (let x = x0; x < xEnd; x++) {
+              const px = x & 3;
               const i = row + x * 4;
-              data[i] = clamp255(orig[i] * (1 - blend) + qr * blend);
-              data[i + 1] = clamp255(orig[i + 1] * (1 - blend) + qg * blend);
-              data[i + 2] = clamp255(orig[i + 2] * (1 - blend) + qb * blend);
+              const dith = (bayer4[py][px] / 15) - 0.5;
+              data[i] = clamp255(baseR + dith * dAmp);
+              data[i + 1] = clamp255(baseG + dith * dAmp * 0.72);
+              data[i + 2] = clamp255(baseB - dith * dAmp * 0.65);
             }
           }
         }
@@ -3769,6 +3855,32 @@ float sat(float x) { return clamp(x, 0.0, 1.0); }
 float hash11(float p) {
   return fract(sin(p * 127.1 + 311.7) * 43758.5453123);
 }
+float bayer4(vec2 p) {
+  float x = mod(p.x, 4.0);
+  float y = mod(p.y, 4.0);
+  if (y < 1.0) {
+    if (x < 1.0) return 0.0 / 15.0;
+    if (x < 2.0) return 8.0 / 15.0;
+    if (x < 3.0) return 2.0 / 15.0;
+    return 10.0 / 15.0;
+  }
+  if (y < 2.0) {
+    if (x < 1.0) return 12.0 / 15.0;
+    if (x < 2.0) return 4.0 / 15.0;
+    if (x < 3.0) return 14.0 / 15.0;
+    return 6.0 / 15.0;
+  }
+  if (y < 3.0) {
+    if (x < 1.0) return 3.0 / 15.0;
+    if (x < 2.0) return 11.0 / 15.0;
+    if (x < 3.0) return 1.0 / 15.0;
+    return 9.0 / 15.0;
+  }
+  if (x < 1.0) return 15.0 / 15.0;
+  if (x < 2.0) return 7.0 / 15.0;
+  if (x < 3.0) return 13.0 / 15.0;
+  return 5.0 / 15.0;
+}
 
 vec3 applyVaporwave(vec2 uv) {
   vec4 src = texture2D(u_tex, uv);
@@ -3825,27 +3937,67 @@ vec3 applyHegseth(vec2 uv) {
 }
 
 vec3 applyPixelArt(vec2 uv) {
-  vec3 src = texture2D(u_tex, uv).rgb;
   float t = u_intensity;
   float bits = clamp(u_bits, 2.0, 8.0);
   float detail = bits / 8.0;
-  float blockPx = max(1.0, (1.0 + (1.0 - detail) * 20.0) * max(1.0, u_pixelScale) * (0.35 + 1.65 * t));
+  float blockPx = max(1.0, (1.0 + (1.0 - detail) * 20.0) * max(1.0, u_pixelScale) * 0.6);
   vec2 blockUV = max(vec2(u_texel.x * blockPx, u_texel.y * blockPx), u_texel);
   vec2 snapped = floor(uv / blockUV) * blockUV + blockUV * 0.5;
-  vec3 sampled = texture2D(u_tex, snapped).rgb;
-  float levels = max(2.0, floor(2.0 + 0.5 * bits * bits));
+  vec3 quant = texture2D(u_tex, snapped).rgb;
+
+  float levelsHi = max(8.0, floor(12.0 + bits * 3.0));
+  float levelsLo = max(4.0, floor(4.0 + bits * 0.75));
+  float levels = max(3.0, floor(mix(levelsHi, levelsLo, pow(t, 0.9))));
   float qScale = levels - 1.0;
-  vec3 quant = floor(sampled * qScale + 0.5) / qScale;
+  quant = floor(quant * qScale + 0.5) / qScale;
   float qLm = dot(quant, vec3(0.299, 0.587, 0.114));
-  float satBoost = 1.0 + 0.55 * t;
-  float contrast = 1.0 + 0.22 * t;
+
+  float celLevels = mix(8.0, 3.0, pow(t, 0.8));
+  float celLm = floor(qLm * celLevels + 0.5) / celLevels;
+  quant = mix(quant, vec3(celLm), 0.06 + 0.38 * t);
+
+  float styleHigh = smoothstep(0.78, 1.0, t);
+  float satBoost = 1.0 + 0.95 * t;
+  float contrast = 1.0 + 0.52 * t;
   quant = vec3(qLm) + (quant - vec3(qLm)) * satBoost;
   quant = (quant - vec3(0.5)) * contrast + vec3(0.5);
-  float shadowW = max(0.0, 1.0 - qLm * 2.1);
-  float hiW = max(0.0, (qLm - 0.55) / 0.45);
-  quant += vec3(0.0627 * hiW + 0.0196 * t, 0.0157 * hiW + 0.0078 * t, 0.0471 * shadowW + 0.0078 * t);
-  quant = clamp(quant, 0.0, 1.0);
-  return mix(src, quant, t);
+
+  float shadowW = max(0.0, (0.55 - qLm) / 0.55);
+  float hiW = max(0.0, (qLm - 0.58) / 0.42);
+  float midW = max(0.0, 1.0 - shadowW - hiW);
+  float tintAmt = t * (1.0 - 0.32 * styleHigh);
+  quant += vec3(
+    (0.078 * hiW + 0.032 * midW - 0.028 * shadowW) * tintAmt,
+    (0.028 * hiW + 0.016 * midW - 0.024 * shadowW) * tintAmt,
+    (-0.01 * hiW + 0.024 * midW + 0.09 * shadowW) * tintAmt
+  );
+  float highContrast = 1.0 + 0.18 * styleHigh;
+  quant = (quant - vec3(0.5)) * highContrast + vec3(0.5) - vec3(0.0314 * styleHigh);
+
+  float gamePop = pow(styleHigh, 0.85);
+  float lmNow = dot(quant, vec3(0.299, 0.587, 0.114));
+  float vib = 1.0 + 0.42 * gamePop;
+  quant = vec3(lmNow) + (quant - vec3(lmNow)) * vib;
+  quant += vec3(
+    (13.0 / 255.0 + 20.0 / 255.0 * hiW - 8.0 / 255.0 * shadowW) * gamePop,
+    (5.0 / 255.0 + 10.0 / 255.0 * midW - 6.0 / 255.0 * shadowW) * gamePop,
+    (9.0 / 255.0 + 14.0 / 255.0 * hiW + 12.0 / 255.0 * shadowW) * gamePop
+  );
+
+  vec2 stepUV = blockUV;
+  float lm = qLm;
+  float lmR = dot(texture2D(u_tex, clamp(snapped + vec2(stepUV.x, 0.0), vec2(0.0), vec2(1.0))).rgb, vec3(0.299, 0.587, 0.114));
+  float lmL = dot(texture2D(u_tex, clamp(snapped - vec2(stepUV.x, 0.0), vec2(0.0), vec2(1.0))).rgb, vec3(0.299, 0.587, 0.114));
+  float lmD = dot(texture2D(u_tex, clamp(snapped + vec2(0.0, stepUV.y), vec2(0.0), vec2(1.0))).rgb, vec3(0.299, 0.587, 0.114));
+  float lmU = dot(texture2D(u_tex, clamp(snapped - vec2(0.0, stepUV.y), vec2(0.0), vec2(1.0))).rgb, vec3(0.299, 0.587, 0.114));
+  float grad = max(max(abs(lmR - lm), abs(lmL - lm)), max(abs(lmD - lm), abs(lmU - lm)));
+  float ink = smoothstep(0.06, 0.28, grad) * pow(t, 1.15);
+  quant *= (1.0 - 0.46 * ink);
+
+  float dith = bayer4(gl_FragCoord.xy) - 0.5;
+  float dAmp = (0.01 + 0.045 * t) * (t * (1.0 - 0.2 * t));
+  quant += vec3(dith * dAmp, dith * dAmp * 0.72, -dith * dAmp * 0.65);
+  return clamp(quant, 0.0, 1.0);
 }
 
 vec3 applyHyperpop(vec2 uv) {
@@ -4800,7 +4952,11 @@ function updateVibeExtraControls() {
   const isNone = name === 'none';
   filterIntensityRow.classList.toggle('hidden', isNone);
   if (filterIntensityLabel) {
-    filterIntensityLabel.textContent = name === 'hegseth' ? 'Beers' : 'Intensity';
+    filterIntensityLabel.textContent = name === 'hegseth'
+      ? 'Beers'
+      : name === 'pixelArt'
+        ? 'Style'
+        : 'Intensity';
   }
   filterLayerRow.classList.toggle('hidden', isNone);
   filterFilmControls.classList.toggle('hidden', name !== 'film');
