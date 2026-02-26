@@ -104,6 +104,7 @@
     <div id="canvas-wrapper">
       <div id="canvas-container">
         <img id="base-image" alt="Uploaded image" />
+        <canvas id="paint-layer" aria-hidden="true"></canvas>
         <!-- Text fields are absolutely positioned inside here -->
       </div>
     </div>
@@ -115,6 +116,7 @@
       <div id="panel-tabs">
         <button class="panel-tab active" data-tab="typography">Typography</button>
         <button class="panel-tab" data-tab="object">Object</button>
+        <button class="panel-tab" data-tab="paint">Paint</button>
         <button class="panel-tab" data-tab="vibe">Vibe</button>
       </div>
 
@@ -341,6 +343,54 @@
             <input type="range" id="ctrl-opacity" min="0.1" max="1" step="0.05" value="1" />
           </div>
         </div>
+        </div>
+      </div>
+
+      <!-- Paint section -->
+      <div id="paint-controls" class="panel-section">
+        <div class="section-divider"></div>
+        <div class="section-heading-row section-heading-row--paint">
+          <button
+            type="button"
+            class="section-heading-toggle"
+            aria-expanded="true"
+            aria-controls="paint-controls-body"
+          >
+            <span class="section-disclosure" aria-hidden="true">▸</span>
+            <span class="control-label section-heading">Paint</span>
+          </button>
+          <button
+            type="button"
+            class="icon-btn paint-toggle-btn paint-toggle-btn--desktop"
+            title="Enable drawing"
+            aria-label="Enable drawing"
+          >
+            <img src="icons/brush_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="" aria-hidden="true" />
+            <span>Draw</span>
+          </button>
+        </div>
+        <div id="paint-controls-body" class="panel-section-body">
+          <div class="controls-row controls-row--paint-actions paint-toggle-row">
+            <button
+              type="button"
+              class="icon-btn paint-toggle-btn"
+              title="Enable drawing"
+              aria-label="Enable drawing"
+            >
+              <img src="icons/brush_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="" aria-hidden="true" />
+              <span>Draw</span>
+            </button>
+          </div>
+          <div class="controls-row controls-row--paint">
+            <div class="control-group">
+              <span class="control-label">Color</span>
+              <input type="color" id="ctrl-paint-color" value="#ff3b30" />
+            </div>
+            <div class="control-group control-group--size">
+              <span class="control-label">Brush</span>
+              <input type="range" id="ctrl-paint-size" min="1" max="64" step="1" value="8" />
+            </div>
+          </div>
         </div>
       </div>
 

@@ -665,6 +665,21 @@ html, body {
   user-select: none;
 }
 
+#paint-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#canvas-container.paint-mode #paint-layer {
+  pointer-events: auto;
+}
+
 #base-image {
   display: block;
   max-width: 100%;
@@ -776,6 +791,7 @@ html, body {
 
 .text-field {
   position: absolute;
+  z-index: 12;
   cursor: grab;
   display: flex;
   flex-direction: column;
@@ -951,6 +967,12 @@ html, body {
   gap: 1.05rem;
 }
 
+#paint-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+}
+
 .object-add-row {
   justify-content: flex-start;
 }
@@ -1064,6 +1086,38 @@ html, body {
 
 .controls-row--presets {
   flex-wrap: wrap;
+}
+
+.controls-row--paint-actions {
+  justify-content: flex-start;
+}
+
+.paint-toggle-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.paint-toggle-btn.active img {
+  filter: brightness(0) invert(1);
+}
+
+.paint-toggle-btn img {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.paint-toggle-btn--desktop {
+  display: none;
+}
+
+.controls-row--paint {
+  align-items: flex-start;
+}
+
+.controls-row--paint .control-group--size {
+  flex: 1;
 }
 
 .chip-scroller {
@@ -1737,6 +1791,19 @@ input[type="range"]::-moz-range-thumb {
     padding-top: 0;
   }
 
+  #paint-controls {
+    grid-column: 1;
+    grid-row: 2;
+    flex: none;
+    min-height: 0;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    gap: 0.55rem;
+    padding-top: 0;
+  }
+
   /* Keep sections in layout so panel height stays intrinsic. Active panel is
      switched by data-panel, without JS height measurements. */
   #filter-section {
@@ -1755,7 +1822,8 @@ input[type="range"]::-moz-range-thumb {
   }
 
   #bottom-panel[data-panel="object"] #font-controls,
-  #bottom-panel[data-panel="vibe"] #font-controls {
+  #bottom-panel[data-panel="vibe"] #font-controls,
+  #bottom-panel[data-panel="paint"] #font-controls {
     visibility: hidden;
     pointer-events: none;
   }
@@ -1773,6 +1841,12 @@ input[type="range"]::-moz-range-thumb {
     pointer-events: none;
   }
 
+  #bottom-panel[data-panel="paint"] #object-controls,
+  #bottom-panel[data-panel="paint"] #filter-section {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   #bottom-panel[data-panel="vibe"] #filter-section {
     height: auto;
     overflow: visible;
@@ -1782,6 +1856,18 @@ input[type="range"]::-moz-range-thumb {
   }
 
   #bottom-panel[data-panel="vibe"] {
+    overflow-y: auto;
+  }
+
+  #bottom-panel[data-panel="paint"] #paint-controls {
+    height: auto;
+    overflow: visible;
+    opacity: 1;
+    pointer-events: auto;
+    padding-top: 0.4rem;
+  }
+
+  #bottom-panel[data-panel="paint"] {
     overflow-y: auto;
   }
 
@@ -1958,6 +2044,36 @@ input[type="range"]::-moz-range-thumb {
     transform: translateY(-50%);
   }
 
+  .paint-toggle-row {
+    display: none;
+  }
+
+  .paint-toggle-btn--desktop {
+    display: inline-flex;
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    padding: 0;
+    gap: 0;
+  }
+
+  .paint-toggle-btn--desktop span {
+    display: none;
+  }
+
+  .section-heading-row--paint {
+    position: relative;
+    justify-content: flex-start;
+    padding-right: 36px;
+  }
+
+  .section-heading-row--paint .paint-toggle-btn--desktop {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%);
+  }
+
   .section-divider {
     display: block;
     margin: 0.75rem 0 0;
@@ -1965,7 +2081,8 @@ input[type="range"]::-moz-range-thumb {
 
   #font-controls,
   #object-controls,
-  #filter-section {
+  #filter-section,
+  #paint-controls {
     height: auto;
     flex: none;         /* reset the mobile flex: 1 */
     justify-content: flex-start;

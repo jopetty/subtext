@@ -20,6 +20,12 @@ const state = {
   dragState: null,       // { field, startX, startY, origLeft, origTop }
   filter: { name: 'none', intensity: 75, params: {}, applyOnTop: false },
   copyActionAvailable: true,
+  paint: {
+    enabled: false,
+    color: '#ff3b30',
+    size: 8,
+    hasStrokes: false,
+  },
 };
 
 const PERF_MAX_SAMPLES = 200;
@@ -1196,6 +1202,7 @@ const backBtn        = document.getElementById('back-btn');
 const exportBtn      = document.getElementById('export-btn');
 const copyBtn        = document.getElementById('copy-btn');
 const baseImage      = document.getElementById('base-image');
+const paintLayer     = document.getElementById('paint-layer');
 const canvasWrapper   = document.getElementById('canvas-wrapper');
 const canvasContainer = document.getElementById('canvas-container');
 const canvasHint      = document.getElementById('canvas-hint');
@@ -1231,6 +1238,9 @@ const ctrlOutlineColor = document.getElementById('ctrl-outline-color');
 const ctrlOutlineWidth = document.getElementById('ctrl-outline-width');
 const ctrlOutlineWidthVal = document.getElementById('ctrl-outline-width-val');
 const ctrlAutoContrast = document.getElementById('ctrl-auto-contrast');
+const paintToggleBtns  = document.querySelectorAll('.paint-toggle-btn');
+const ctrlPaintColor   = document.getElementById('ctrl-paint-color');
+const ctrlPaintSize    = document.getElementById('ctrl-paint-size');
 const alignBtns        = document.querySelectorAll('.align-btn');
 const presetBtns       = document.querySelectorAll('.preset-chip');
 const uploadStatus     = document.getElementById('upload-status');
@@ -1512,6 +1522,7 @@ function fitImageToWrapper() {
   const scale = Math.min(availW / state.imageNaturalW, availH / state.imageNaturalH);
   baseImage.style.width  = Math.round(state.imageNaturalW * scale) + 'px';
   baseImage.style.height = Math.round(state.imageNaturalH * scale) + 'px';
+  resizePaintLayerToImage({ preserve: true });
 }
 
 function getPreviewTextBlurPx(blurAmount, previewScale, opts = {}) {
@@ -1626,6 +1637,167 @@ function isMobileViewport() {
   return window.matchMedia('(max-width: 769px)').matches;
 }
 
+let _paintCtx = null;
+let _paintDrawing = false;
+let _paintPointerId = null;
+let _paintLastX = 0;
+let _paintLastY = 0;
+let _paintMinX = Infinity;
+let _paintMinY = Infinity;
+let _paintMaxX = -Infinity;
+let _paintMaxY = -Infinity;
+
+function getPaintContext() {
+  if (!_paintCtx && paintLayer) {
+    _paintCtx = paintLayer.getContext('2d');
+  }
+  return _paintCtx;
+}
+
+function isPaintPanelActive() {
+  return !isMobileViewport() || bottomPanel?.dataset?.panel === 'paint';
+}
+
+function isPaintInteractive() {
+  return !!(state.imageLoaded && state.paint.enabled && isPaintPanelActive());
+}
+
+function syncPaintControls() {
+  if (ctrlPaintColor) ctrlPaintColor.value = state.paint.color;
+  if (ctrlPaintSize) ctrlPaintSize.value = String(state.paint.size);
+  paintToggleBtns.forEach((btn) => {
+    btn.classList.toggle('active', state.paint.enabled);
+    const title = state.paint.enabled ? 'Drawing enabled' : 'Enable drawing';
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+  });
+}
+
+function syncPaintInteractivity() {
+  canvasContainer.classList.toggle('paint-mode', isPaintInteractive());
+}
+
+function clearPaintLayer({ schedule = true } = {}) {
+  const ctx = getPaintContext();
+  if (!ctx || !paintLayer) return;
+  ctx.clearRect(0, 0, paintLayer.width, paintLayer.height);
+  state.paint.hasStrokes = false;
+  _paintMinX = Infinity;
+  _paintMinY = Infinity;
+  _paintMaxX = -Infinity;
+  _paintMaxY = -Infinity;
+  if (schedule) {
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ interactive: true });
+  }
+}
+
+function resizePaintLayerToImage({ preserve = true } = {}) {
+  if (!paintLayer) return;
+  const nextW = Math.max(1, Math.round(baseImage.offsetWidth || 0));
+  const nextH = Math.max(1, Math.round(baseImage.offsetHeight || 0));
+  if (!nextW || !nextH) return;
+  if (paintLayer.width === nextW && paintLayer.height === nextH) return;
+
+  let prevCanvas = null;
+  if (preserve && paintLayer.width > 0 && paintLayer.height > 0 && state.paint.hasStrokes) {
+    prevCanvas = document.createElement('canvas');
+    prevCanvas.width = paintLayer.width;
+    prevCanvas.height = paintLayer.height;
+    const prevCtx = prevCanvas.getContext('2d');
+    prevCtx.drawImage(paintLayer, 0, 0);
+  }
+
+  paintLayer.width = nextW;
+  paintLayer.height = nextH;
+  _paintCtx = paintLayer.getContext('2d');
+  if (prevCanvas) {
+    _paintCtx.drawImage(prevCanvas, 0, 0, nextW, nextH);
+  }
+}
+
+function drawBaseAndPaintToContext(ctx, w, h) {
+  ctx.drawImage(baseImage, 0, 0, w, h);
+  if (paintLayer && state.paint.hasStrokes && paintLayer.width > 0 && paintLayer.height > 0) {
+    ctx.drawImage(paintLayer, 0, 0, w, h);
+  }
+}
+
+function getPaintPointFromEvent(e) {
+  const rect = paintLayer.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+  const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+  return { x, y };
+}
+
+function paintLineTo(x, y) {
+  const ctx = getPaintContext();
+  if (!ctx) return;
+  const prevX = _paintLastX;
+  const prevY = _paintLastY;
+  ctx.save();
+  ctx.strokeStyle = state.paint.color;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = state.paint.size;
+  ctx.beginPath();
+  ctx.moveTo(prevX, prevY);
+  ctx.lineTo(x, y);
+  ctx.stroke();
+  ctx.restore();
+  _paintLastX = x;
+  _paintLastY = y;
+  const r = Math.max(1, state.paint.size * 0.5 + 2);
+  _paintMinX = Math.min(_paintMinX, x - r, prevX - r);
+  _paintMinY = Math.min(_paintMinY, y - r, prevY - r);
+  _paintMaxX = Math.max(_paintMaxX, x + r, prevX + r);
+  _paintMaxY = Math.max(_paintMaxY, y + r, prevY + r);
+}
+
+async function commitPaintLayerToImageObject() {
+  if (!paintLayer || !state.paint.hasStrokes) return;
+  const pw = paintLayer.width;
+  const ph = paintLayer.height;
+  if (pw <= 0 || ph <= 0) return;
+
+  const minX = Math.max(0, Math.floor(_paintMinX));
+  const minY = Math.max(0, Math.floor(_paintMinY));
+  const maxX = Math.min(pw, Math.ceil(_paintMaxX));
+  const maxY = Math.min(ph, Math.ceil(_paintMaxY));
+  const cropW = Math.max(1, maxX - minX);
+  const cropH = Math.max(1, maxY - minY);
+
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = cropW;
+  cropCanvas.height = cropH;
+  const cropCtx = cropCanvas.getContext('2d');
+  cropCtx.drawImage(paintLayer, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+
+  const blob = await new Promise((resolve) => cropCanvas.toBlob(resolve, 'image/png'));
+  if (!blob) return;
+
+  const centerXPct = (minX + cropW / 2) / Math.max(1, pw);
+  const centerYPct = (minY + cropH / 2) / Math.max(1, ph);
+  const imageObj = await addImageObjectFromBlob(blob, centerXPct, centerYPct, { isVector: false });
+  const sizePct = Math.max(1, Math.min(100, (cropW / Math.max(1, pw)) * 100));
+  imageObj?.updateStyle?.({ size: sizePct });
+}
+
+async function endPaintStroke() {
+  if (!_paintDrawing) return;
+  _paintDrawing = false;
+  _paintPointerId = null;
+  try {
+    await commitPaintLayerToImageObject();
+  } catch {}
+  state.paint.enabled = false;
+  syncPaintControls();
+  syncPaintInteractivity();
+  clearPaintLayer({ schedule: false });
+  markPreviewSourceDirty();
+  scheduleImageFilterRender({ settle: true });
+}
+
 function showEditor() {
   uploadScreen.classList.remove('active');
   uploadScreen.classList.remove('drag-over');
@@ -1639,13 +1811,22 @@ function showEditor() {
   state.objects = [];
   state.selectedObject = null;
   state.lastStyle = null;
+  state.paint.enabled = false;
+  state.paint.hasStrokes = false;
+  _paintMinX = Infinity;
+  _paintMinY = Infinity;
+  _paintMaxX = -Infinity;
+  _paintMaxY = -Infinity;
   markPreviewSourceDirty();
   // Always start on the Typography tab when opening the editor
   switchPanelTab('typography');
+  syncPaintControls();
+  syncPaintInteractivity();
   updatePanel();
   // Size image to fill available space after layout is committed
   requestAnimationFrame(() => {
     fitImageToWrapper();
+    clearPaintLayer({ schedule: false });
     // Force fresh preview render so pixel-overlay vibes don't show stale image data.
     scheduleImageFilterRender({ settle: true });
   });
@@ -1673,6 +1854,15 @@ function showUpload() {
   baseImage.removeAttribute('src');
   baseImage.style.width  = '';
   baseImage.style.height = '';
+  state.paint.enabled = false;
+  state.paint.hasStrokes = false;
+  if (paintLayer) {
+    paintLayer.width = 1;
+    paintLayer.height = 1;
+  }
+  _paintCtx = null;
+  syncPaintControls();
+  syncPaintInteractivity();
   deselectAll();
   state.objects.forEach(obj => obj.destroy?.());
   state.objects = [];
@@ -2960,7 +3150,7 @@ function renderFilteredPreviewToContrastCanvas() {
   ctx.clearRect(0, 0, w, h);
 
   ctx.filter = 'none';
-  ctx.drawImage(baseImage, 0, 0, w, h);
+  drawBaseAndPaintToContext(ctx, w, h);
   ctx.filter = 'none';
 
   if (name !== 'none') {
@@ -3183,6 +3373,7 @@ function syncFontSelectDisplay() {
 function switchPanelTab(tabName) {
   bottomPanel.dataset.panel = tabName;
   panelTabBtns.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+  syncPaintInteractivity();
 
   // Ensure horizontally scrollable chip rows always start flush-left when
   // their section is shown, avoiding browser-restored mid-scroll clipping.
@@ -3232,6 +3423,79 @@ function initSidebarSectionToggles() {
 panelTabBtns.forEach(tab => {
   tab.addEventListener('click', () => switchPanelTab(tab.dataset.tab));
 });
+
+if (ctrlPaintColor) {
+  ctrlPaintColor.addEventListener('input', () => {
+    state.paint.color = ctrlPaintColor.value || '#ff3b30';
+    syncPaintControls();
+  });
+}
+
+if (ctrlPaintSize) {
+  ctrlPaintSize.addEventListener('input', () => {
+    const size = Math.max(1, Math.min(64, parseInt(ctrlPaintSize.value || '8', 10) || 8));
+    state.paint.size = size;
+    syncPaintControls();
+  });
+}
+
+paintToggleBtns.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    // One-shot behavior: arm drawing until the current stroke ends.
+    state.paint.enabled = true;
+    syncPaintControls();
+    syncPaintInteractivity();
+    deselectAll();
+  });
+});
+
+if (paintLayer) {
+  paintLayer.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !isPaintInteractive()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    deselectAll();
+    const { x, y } = getPaintPointFromEvent(e);
+    _paintDrawing = true;
+    _paintPointerId = e.pointerId;
+    _paintLastX = x;
+    _paintLastY = y;
+    _paintMinX = x;
+    _paintMinY = y;
+    _paintMaxX = x;
+    _paintMaxY = y;
+    try {
+      paintLayer.setPointerCapture(e.pointerId);
+    } catch {}
+    paintLineTo(x, y);
+    state.paint.hasStrokes = true;
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ interactive: true });
+  });
+
+  paintLayer.addEventListener('pointermove', (e) => {
+    if (!_paintDrawing || e.pointerId !== _paintPointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { x, y } = getPaintPointFromEvent(e);
+    paintLineTo(x, y);
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ interactive: true });
+  });
+
+  const finishStroke = async (e) => {
+    if (!_paintDrawing || e.pointerId !== _paintPointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      paintLayer.releasePointerCapture(e.pointerId);
+    } catch {}
+    await endPaintStroke();
+  };
+
+  paintLayer.addEventListener('pointerup', finishStroke);
+  paintLayer.addEventListener('pointercancel', finishStroke);
+}
 
 // ─── Control listeners ────────────────────────────────────────────────────────
 
@@ -3400,14 +3664,14 @@ function ensureVaporSrcContext() {
 
 function makeOverlayCanvas() {
   const el = document.createElement('canvas');
-  el.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+  el.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2;';
   baseImage.insertAdjacentElement('afterend', el);
   return el;
 }
 
 function updateOverlayLayering(el) {
   if (!el) return;
-  el.style.zIndex = state.filter.applyOnTop ? '30' : 'auto';
+  el.style.zIndex = state.filter.applyOnTop ? '30' : '2';
 }
 
 function hideGpuPreviewOverlay() {
@@ -3761,7 +4025,7 @@ function isPixelPreviewFilter(name) {
 function syncTextFieldLayering() {
   const onTopPixelFilter = state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
   for (const obj of state.objects) {
-    obj.el.style.zIndex = (onTopPixelFilter && state.selectedObject === obj) ? '40' : 'auto';
+    obj.el.style.zIndex = (onTopPixelFilter && state.selectedObject === obj) ? '40' : '12';
   }
 }
 
@@ -4053,7 +4317,7 @@ function updateChromaOverlay() {
     vaporSrcCanvas.height = h;
   }
   vaporSrcCtx.clearRect(0, 0, w, h);
-  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  drawBaseAndPaintToContext(vaporSrcCtx, w, h);
   if (state.filter.applyOnTop) {
     drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
@@ -4100,7 +4364,7 @@ function updateSolarpunkOverlay() {
     vaporSrcCanvas.height = h;
   }
   vaporSrcCtx.clearRect(0, 0, w, h);
-  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  drawBaseAndPaintToContext(vaporSrcCtx, w, h);
   if (state.filter.applyOnTop) {
     drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
@@ -4144,7 +4408,7 @@ function updateHegsethOverlay() {
     vaporSrcCanvas.height = h;
   }
   vaporSrcCtx.clearRect(0, 0, w, h);
-  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  drawBaseAndPaintToContext(vaporSrcCtx, w, h);
   if (state.filter.applyOnTop) {
     drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
@@ -4188,7 +4452,7 @@ function updateMexicoOverlay() {
     vaporSrcCanvas.height = h;
   }
   vaporSrcCtx.clearRect(0, 0, w, h);
-  vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+  drawBaseAndPaintToContext(vaporSrcCtx, w, h);
   if (state.filter.applyOnTop) {
     drawPreviewObjectLayers(vaporSrcCtx, w, h);
   }
@@ -4301,7 +4565,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
     } else {
       const sourceBuildStart = performance.now();
       vaporSrcCtx.clearRect(0, 0, w, h);
-      vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+      drawBaseAndPaintToContext(vaporSrcCtx, w, h);
       if (state.filter.applyOnTop) {
         drawPreviewObjectLayers(vaporSrcCtx, w, h, { bypassSelectedObject });
       }
@@ -4360,7 +4624,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   } else {
     const sourceBuildStart = performance.now();
     vaporSrcCtx.clearRect(0, 0, w, h);
-    vaporSrcCtx.drawImage(baseImage, 0, 0, w, h);
+    drawBaseAndPaintToContext(vaporSrcCtx, w, h);
     if (state.filter.applyOnTop) {
       drawPreviewObjectLayers(vaporSrcCtx, w, h, { bypassSelectedObject });
     }
@@ -5020,6 +5284,9 @@ async function renderCurrentImageBlob(options = {}) {
 
   // Draw base image
   ctx.drawImage(img, 0, 0, nw, nh);
+  if (paintLayer && state.paint.hasStrokes && paintLayer.width > 0 && paintLayer.height > 0) {
+    ctx.drawImage(paintLayer, 0, 0, nw, nh);
+  }
 
   // Apply filter before text (default behavior) or after text (on-top mode).
   if (!state.filter.applyOnTop) {
@@ -5314,6 +5581,8 @@ function closeRenderedPreviewOverlay() {
 initGuides();
 buildFontDropdown();
 syncFontSelectDisplay();
+syncPaintControls();
+syncPaintInteractivity();
 initSidebarSectionToggles();
 switchPanelTab('typography'); // set initial data-panel attribute
 exportBtn.addEventListener('click', handleSaveAction);
@@ -5614,6 +5883,7 @@ window.addEventListener('resize', () => {
     state.objects.forEach(tf => tf.reposition());
     if (state.imageLoaded) {
       fitImageToWrapper();
+      syncPaintInteractivity();
       markPreviewSourceDirty();
       scheduleImageFilterRender({ settle: true });
     }
