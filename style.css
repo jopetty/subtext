@@ -262,6 +262,24 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'InstrumentSerif';
+  src: url('fonts/instrument-serif-regular.woff2') format('woff2'),
+       url('fonts/instrument-serif-regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'InstrumentSerif';
+  src: url('fonts/instrument-serif-italic.woff2') format('woff2'),
+       url('fonts/instrument-serif-italic.woff') format('woff');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -300,6 +318,7 @@
   --font-old-english-five: 'OldEnglishFive', serif;
   --font-amarante: 'Amarante', serif;
   --font-limelight: 'Limelight', serif;
+  --font-instrument-serif: 'InstrumentSerif', 'Garamontio', 'EB Garamond', Garamond, 'Times New Roman', serif;
   --font-handjet: 'Handjet', sans-serif;
   --font-press-start: 'PressStart2P', monospace;
   --font-silkscreen: 'Silkscreen', monospace;
