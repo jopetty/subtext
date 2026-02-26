@@ -375,6 +375,140 @@ const FILTERS = {
     },
   },
 
+  hyperpop: {
+    label: 'Hyperpop',
+    cssPreview: (t) =>
+      `saturate(${1 + 1.8*t}) hue-rotate(${18*t}deg) contrast(${1 + 0.42*t}) brightness(${1 + 0.06*t})`,
+    apply(data, w, h, t, _params = {}, pixelScale = 1, scratch) {
+      const rawT = Math.max(0, Math.min(1, t));
+      if (rawT <= 0) return;
+      // Non-linear response so lower slider values have real impact.
+      const shapedT = Math.pow(rawT, 0.42);
+      const drive = 0.24 + 1.48 * shapedT;
+      const mixT = Math.min(1, 0.2 + 1.08 * shapedT);
+      const localScratch = scratch || getFilterScratch('hyperpop', data.length);
+      const orig = localScratch.orig;
+      orig.set(data);
+      let sliceCache = localScratch.sliceCache;
+      if (!sliceCache) {
+        sliceCache = localScratch.sliceCache = new Map();
+      } else {
+        sliceCache.clear();
+      }
+      const posterLevels = Math.max(4, Math.round(12 - 7 * drive));
+      const qScale = posterLevels - 1;
+      const satBoost = 1 + 1.45 * drive;
+      const contrast = 1 + 0.36 * drive;
+      const bloomW = 0.2 + 0.3 * drive;
+      const edgeW = 0.18 + 0.48 * drive;
+      const angleRad = ((Number(_params?.angle) || 0) * Math.PI) / 180;
+      const lineDx = Math.cos(angleRad);
+      const lineDy = -Math.sin(angleRad);
+      const normalX = -lineDy;
+      const normalY = lineDx;
+      const sliceH = Math.max(2, Math.round((3 + 11 * drive) * Math.max(0.8, pixelScale)));
+      const maxJitter = Math.max(1, Math.round((2 + 28 * drive) * Math.max(0.9, pixelScale)));
+      const glitchT = Math.max(0, (drive - 0.15) / 0.85);
+      const sliceThreshold = 0.3 - 0.22 * drive;
+      const colorJitterScale = 18 * glitchT * Math.min(1.4, drive);
+      const hash01 = (v) => {
+        const s = Math.sin(v * 12.9898 + 78.233) * 43758.5453;
+        return s - Math.floor(s);
+      };
+      for (let y = 0; y < h; y++) {
+        const ym1 = y > 0 ? y - 1 : 0;
+        const yp1 = y < h - 1 ? y + 1 : h - 1;
+        for (let x = 0; x < w; x++) {
+          const sliceCoord = x * normalX + y * normalY;
+          const sliceIdx = Math.floor(sliceCoord / sliceH);
+          let sliceParams = sliceCache.get(sliceIdx);
+          if (!sliceParams) {
+            const jitterSeed = hash01(sliceIdx + 31.7);
+            const jitter = Math.round((jitterSeed * 2 - 1) * maxJitter * glitchT);
+            const colorJitter = (hash01(sliceIdx + 7.3) * 2 - 1) * colorJitterScale;
+            const sliceGate = hash01(sliceIdx + 97.1) > sliceThreshold ? 1 : 0;
+            const accentPhase = hash01(sliceIdx + 13.9);
+            sliceParams = { jitter, colorJitter, sliceGate, accentPhase };
+            sliceCache.set(sliceIdx, sliceParams);
+          }
+          const xm1 = x > 0 ? x - 1 : 0;
+          const xp1 = x < w - 1 ? x + 1 : w - 1;
+          const sxRaw = x + lineDx * sliceParams.jitter * sliceParams.sliceGate;
+          const syRaw = y + lineDy * sliceParams.jitter * sliceParams.sliceGate;
+          const sx = sxRaw < 0 ? 0 : sxRaw >= w ? w - 1 : Math.round(sxRaw);
+          const sy = syRaw < 0 ? 0 : syRaw >= h ? h - 1 : Math.round(syRaw);
+          const i = (y * w + x) * 4;
+          const si = (sy * w + sx) * 4;
+
+          const cR = orig[si];
+          const cG = orig[si + 1];
+          const cB = orig[si + 2];
+          let r = cR;
+          let g = cG;
+          let b = cB;
+          const lm = 0.299 * cR + 0.587 * cG + 0.114 * cB;
+          const bright = lm / 255;
+
+          r = clamp255(lm + (r - lm) * satBoost);
+          g = clamp255(lm + (g - lm) * satBoost);
+          b = clamp255(lm + (b - lm) * satBoost);
+
+          const qr = Math.round((r / 255) * qScale) * (255 / qScale);
+          const qg = Math.round((g / 255) * qScale) * (255 / qScale);
+          const qb = Math.round((b / 255) * qScale) * (255 / qScale);
+          r = (qr - 128) * contrast + 128;
+          g = (qg - 128) * contrast + 128;
+          b = (qb - 128) * contrast + 128;
+
+          const shadowW = Math.max(0, 1 - bright * 2.2);
+          const hiW = Math.max(0, (bright - 0.42) / 0.58);
+          const midW = Math.max(0, 1 - shadowW - hiW);
+          // Rotating neon accents: magenta / lime / cyan by slice.
+          const accentPhase = sliceParams.accentPhase;
+          const isMagenta = accentPhase < 0.22;
+          const isLime = accentPhase >= 0.22 && accentPhase < 0.55;
+          const isCyan = accentPhase >= 0.55 && accentPhase < 0.82;
+          const aR = isMagenta ? 30 : isLime ? 8 : isCyan ? 9 : 24;
+          const aG = isMagenta ? 10 : isLime ? 34 : isCyan ? 20 : 28;
+          const aB = isMagenta ? 26 : isLime ? 9 : isCyan ? 34 : 10;
+          r = clamp255(r + (aR * hiW + 12 * midW - 8 * shadowW + sliceParams.colorJitter * 0.7));
+          g = clamp255(g + (aG * hiW + 16 * midW + 20 * shadowW - sliceParams.colorJitter * 0.2));
+          b = clamp255(b + (aB * hiW + 2 * midW + 24 * shadowW));
+
+          const left = (y * w + xm1) * 4;
+          const right = (y * w + xp1) * 4;
+          const up = (ym1 * w + x) * 4;
+          const down = (yp1 * w + x) * 4;
+          const edge =
+            Math.abs(4 * cR - orig[left] - orig[right] - orig[up] - orig[down]) * 0.28 +
+            Math.abs(4 * cG - orig[left + 1] - orig[right + 1] - orig[up + 1] - orig[down + 1]) * 0.22 +
+            Math.abs(4 * cB - orig[left + 2] - orig[right + 2] - orig[up + 2] - orig[down + 2]) * 0.32;
+          const edgeTint = edge * edgeW;
+          r = clamp255(r + edgeTint);
+          g = clamp255(g + edgeTint * 0.25);
+          b = clamp255(b + edgeTint * 0.8);
+
+          const blr = (orig[left] + orig[right] + orig[up] + orig[down]) * 0.25;
+          const blg = (orig[left + 1] + orig[right + 1] + orig[up + 1] + orig[down + 1]) * 0.25;
+          const blb = (orig[left + 2] + orig[right + 2] + orig[up + 2] + orig[down + 2]) * 0.25;
+          const gloss = hiW * hiW;
+          r = clamp255(r + (blr - cR) * bloomW + gloss * 34 * bloomW);
+          g = clamp255(g + (blg - cG) * bloomW + gloss * 18 * bloomW);
+          b = clamp255(b + (blb - cB) * bloomW + gloss * 24 * bloomW);
+
+          const noise = (Math.random() - 0.5) * (7 + 14 * drive);
+          r = clamp255(r + noise);
+          g = clamp255(g + noise * 0.55);
+          b = clamp255(b + noise * 0.75);
+
+          data[i] = clamp255(cR * (1 - mixT) + r * mixT);
+          data[i + 1] = clamp255(cG * (1 - mixT) + g * mixT);
+          data[i + 2] = clamp255(cB * (1 - mixT) + b * mixT);
+        }
+      }
+    },
+  },
+
   noir: {
     label: 'Noir',
     cssPreview: (t) =>
@@ -873,6 +1007,7 @@ const FILTER_PARAM_DEFAULTS = {
   dithering:   {},
   pixelArt:    { bits: 5 },
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
+  hyperpop:    { angle: 0 },
   twilight:    {},
   mexico:      {},
   darkAcademia: { grain: 45, vignette: 65 },
@@ -1561,6 +1696,7 @@ function showUpload() {
   filterDarkAcadControls.classList.add('hidden');
   filterSolarpunkControls.classList.add('hidden');
   filterHegsethControls.classList.add('hidden');
+  filterHyperpopControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
   ctrlFilterOnTop.checked = false;
   if (_filterRenderRaf) {
@@ -3161,6 +3297,7 @@ const filterVaporControls  = document.getElementById('filter-vaporwave-controls'
 const filterDarkAcadControls = document.getElementById('filter-darkacademia-controls');
 const filterSolarpunkControls = document.getElementById('filter-solarpunk-controls');
 const filterHegsethControls = document.getElementById('filter-hegseth-controls');
+const filterHyperpopControls = document.getElementById('filter-hyperpop-controls');
 const filterPixelArtControls = document.getElementById('filter-pixelart-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
@@ -3172,6 +3309,7 @@ const ctrlBloom            = document.getElementById('ctrl-bloom');
 const ctrlHaze             = document.getElementById('ctrl-haze');
 const ctrlHegsethAngle     = document.getElementById('ctrl-hegseth-angle');
 const ctrlHegsethGhostDistance = document.getElementById('ctrl-hegseth-ghost-distance');
+const ctrlHyperpopAngle    = document.getElementById('ctrl-hyperpop-angle');
 const ctrlPixelBits        = document.getElementById('ctrl-pixel-bits');
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
@@ -3194,7 +3332,7 @@ let grainBuffer    = null;
 let grainBufferW   = 0;
 let grainBufferH   = 0;
 let grainNoiseTs   = 0;
-const GPU_PREVIEW_FILTERS = new Set(['vaporwave', 'hegseth', 'pixelArt']);
+const GPU_PREVIEW_FILTERS = new Set(['vaporwave', 'hegseth', 'pixelArt', 'hyperpop']);
 const gpuPreview = {
   gl: null,
   program: null,
@@ -3336,11 +3474,15 @@ uniform float u_chroma;
 uniform float u_scanlines;
 uniform float u_scanlineSize;
 uniform float u_angle;
+uniform vec2 u_lineDir;
 uniform float u_ghostDistance;
 uniform float u_bits;
 uniform float u_pixelScale;
 
 float sat(float x) { return clamp(x, 0.0, 1.0); }
+float hash11(float p) {
+  return fract(sin(p * 127.1 + 311.7) * 43758.5453123);
+}
 
 vec3 applyVaporwave(vec2 uv) {
   vec4 src = texture2D(u_tex, uv);
@@ -3420,14 +3562,85 @@ vec3 applyPixelArt(vec2 uv) {
   return mix(src, quant, t);
 }
 
+vec3 applyHyperpop(vec2 uv) {
+  vec3 src0 = texture2D(u_tex, uv).rgb;
+  float rawT = u_intensity;
+  float shapedT = pow(rawT, 0.42);
+  float drive = 0.24 + 1.48 * shapedT;
+  float mixT = min(1.0, 0.2 + 1.08 * shapedT);
+  vec2 lineDir = u_lineDir;
+  vec2 normal = vec2(-lineDir.y, lineDir.x);
+  vec2 px = vec2(uv.x / max(u_texel.x, 1e-6), uv.y / max(u_texel.y, 1e-6));
+  float sliceH = max(2.0, (3.0 + 11.0 * drive) * max(0.8, u_pixelScale));
+  float sliceCoord = dot(px, normal);
+  float sliceIdx = floor(sliceCoord / sliceH);
+  float glitchT = max(0.0, (drive - 0.15) / 0.85);
+  float jitterSeed = hash11(sliceIdx + 31.7);
+  float maxJitter = (2.0 + 28.0 * drive) * max(0.9, u_pixelScale);
+  float jitter = (jitterSeed * 2.0 - 1.0) * maxJitter * glitchT;
+  float sliceGate = step(0.3 - 0.22 * drive, hash11(sliceIdx + 97.1));
+  vec2 suv = uv + vec2(
+    lineDir.x * jitter * sliceGate * u_texel.x,
+    lineDir.y * jitter * sliceGate * u_texel.y
+  );
+  vec3 src = texture2D(u_tex, clamp(suv, vec2(0.0), vec2(1.0))).rgb;
+  float r = src.r;
+  float g = src.g;
+  float b = src.b;
+  vec3 c = vec3(r, g, b);
+  float lm = dot(src, vec3(0.299, 0.587, 0.114));
+  float bright = lm;
+  float satBoost = 1.0 + 1.45 * drive;
+  c = vec3(lm) + (c - vec3(lm)) * satBoost;
+  float levels = max(4.0, floor(12.0 - 7.0 * drive));
+  float q = levels - 1.0;
+  c = floor(c * q + 0.5) / q;
+  float contrast = 1.0 + 0.36 * drive;
+  c = (c - vec3(0.5)) * contrast + vec3(0.5);
+  float shadowW = max(0.0, 1.0 - bright * 2.2);
+  float hiW = max(0.0, (bright - 0.42) / 0.58);
+  float midW = max(0.0, 1.0 - shadowW - hiW);
+  float colorJitter = (hash11(sliceIdx + 7.3) * 2.0 - 1.0) * 18.0 * glitchT * min(1.4, drive);
+  float accentPhase = hash11(sliceIdx + 13.9);
+  float isMagenta = 1.0 - step(0.22, accentPhase);
+  float isLime = step(0.22, accentPhase) * (1.0 - step(0.55, accentPhase));
+  float isCyan = step(0.55, accentPhase) * (1.0 - step(0.82, accentPhase));
+  float isYellow = step(0.82, accentPhase);
+  float aR = isMagenta * 30.0 + isLime * 8.0 + isCyan * 9.0 + isYellow * 24.0;
+  float aG = isMagenta * 10.0 + isLime * 34.0 + isCyan * 20.0 + isYellow * 28.0;
+  float aB = isMagenta * 26.0 + isLime * 9.0 + isCyan * 34.0 + isYellow * 10.0;
+  c += vec3(
+    (aR * hiW + 12.0 * midW - 8.0 * shadowW + colorJitter * 0.7) / 255.0,
+    (aG * hiW + 16.0 * midW + 20.0 * shadowW - colorJitter * 0.2) / 255.0,
+    (aB * hiW + 2.0 * midW + 24.0 * shadowW) / 255.0
+  );
+
+  vec3 left = texture2D(u_tex, uv - vec2(u_texel.x, 0.0)).rgb;
+  vec3 right = texture2D(u_tex, uv + vec2(u_texel.x, 0.0)).rgb;
+  vec3 up = texture2D(u_tex, uv - vec2(0.0, u_texel.y)).rgb;
+  vec3 down = texture2D(u_tex, uv + vec2(0.0, u_texel.y)).rgb;
+  vec3 lap = abs(4.0 * src - left - right - up - down);
+  float edge = dot(lap, vec3(0.28, 0.22, 0.32));
+  float edgeW = 0.18 + 0.48 * drive;
+  c += vec3(edge * edgeW, edge * edgeW * 0.25, edge * edgeW * 0.8);
+
+  vec3 blur = (left + right + up + down) * 0.25;
+  float bloomW = 0.2 + 0.3 * drive;
+  float gloss = hiW * hiW;
+  c += (blur - src) * bloomW + vec3(34.0, 18.0, 24.0) * ((gloss * bloomW) / 255.0);
+  return mix(src0, clamp(c, 0.0, 1.0), mixT);
+}
+
 void main() {
   vec3 c = texture2D(u_tex, v_uv).rgb;
   if (u_filterType < 1.5) {
     c = applyVaporwave(v_uv);
   } else if (u_filterType < 2.5) {
     c = applyHegseth(v_uv);
-  } else {
+  } else if (u_filterType < 3.5) {
     c = applyPixelArt(v_uv);
+  } else {
+    c = applyHyperpop(v_uv);
   }
   gl_FragColor = vec4(sat(c.r), sat(c.g), sat(c.b), 1.0);
 }
@@ -3466,6 +3679,7 @@ void main() {
       uScanlines: gl.getUniformLocation(program, 'u_scanlines'),
       uScanlineSize: gl.getUniformLocation(program, 'u_scanlineSize'),
       uAngle: gl.getUniformLocation(program, 'u_angle'),
+      uLineDir: gl.getUniformLocation(program, 'u_lineDir'),
       uGhostDistance: gl.getUniformLocation(program, 'u_ghostDistance'),
       uBits: gl.getUniformLocation(program, 'u_bits'),
       uPixelScale: gl.getUniformLocation(program, 'u_pixelScale'),
@@ -3499,12 +3713,18 @@ function renderGpuPreviewFilter(sourceCanvas, w, h, name, intensity, params, pix
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
   gl.uniform1i(gpuPreview.loc.uTex, 0);
   gl.uniform2f(gpuPreview.loc.uTexel, 1 / Math.max(1, w), 1 / Math.max(1, h));
-  gl.uniform1f(gpuPreview.loc.uFilterType, name === 'hegseth' ? 2 : name === 'pixelArt' ? 3 : 1);
+  gl.uniform1f(
+    gpuPreview.loc.uFilterType,
+    name === 'hegseth' ? 2 : name === 'pixelArt' ? 3 : name === 'hyperpop' ? 4 : 1
+  );
   gl.uniform1f(gpuPreview.loc.uIntensity, intensity);
   gl.uniform1f(gpuPreview.loc.uChroma, params?.chroma ?? 20);
   gl.uniform1f(gpuPreview.loc.uScanlines, params?.scanlines ?? 60);
   gl.uniform1f(gpuPreview.loc.uScanlineSize, params?.scanlineSize ?? 2);
-  gl.uniform1f(gpuPreview.loc.uAngle, params?.angle ?? 0);
+  const angleDeg = params?.angle ?? 0;
+  gl.uniform1f(gpuPreview.loc.uAngle, angleDeg);
+  const angleRad = angleDeg * Math.PI / 180;
+  gl.uniform2f(gpuPreview.loc.uLineDir, Math.cos(angleRad), Math.sin(angleRad));
   gl.uniform1f(gpuPreview.loc.uGhostDistance, params?.ghostDistance ?? 50);
   gl.uniform1f(gpuPreview.loc.uBits, params?.bits ?? 5);
   gl.uniform1f(gpuPreview.loc.uPixelScale, pixelScale);
@@ -4302,6 +4522,7 @@ function updateVibeExtraControls() {
   filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
   filterSolarpunkControls.classList.toggle('hidden', name !== 'solarpunk');
   filterHegsethControls.classList.toggle('hidden', name !== 'hegseth');
+  filterHyperpopControls.classList.toggle('hidden', name !== 'hyperpop');
   filterPixelArtControls.classList.toggle('hidden', name !== 'pixelArt');
   ctrlFilterOnTop.checked = !!state.filter.applyOnTop;
 }
@@ -4342,6 +4563,8 @@ filterChips.forEach(chip => {
     } else if (state.filter.name === 'hegseth') {
       ctrlHegsethAngle.value = state.filter.params.angle;
       ctrlHegsethGhostDistance.value = state.filter.params.ghostDistance;
+    } else if (state.filter.name === 'hyperpop') {
+      ctrlHyperpopAngle.value = state.filter.params.angle;
     } else if (state.filter.name === 'pixelArt') {
       ctrlPixelBits.value = state.filter.params.bits;
     }
@@ -4411,6 +4634,11 @@ ctrlHegsethGhostDistance.addEventListener('input', () => {
   scheduleImageFilterRender({ interactive: true });
 });
 
+ctrlHyperpopAngle.addEventListener('input', () => {
+  state.filter.params.angle = parseInt(ctrlHyperpopAngle.value);
+  scheduleImageFilterRender({ interactive: true });
+});
+
 ctrlPixelBits.addEventListener('input', () => {
   state.filter.params.bits = parseInt(ctrlPixelBits.value);
   scheduleImageFilterRender({ interactive: true });
@@ -4428,6 +4656,7 @@ ctrlPixelBits.addEventListener('input', () => {
   ctrlHaze,
   ctrlHegsethAngle,
   ctrlHegsethGhostDistance,
+  ctrlHyperpopAngle,
   ctrlPixelBits,
 ].forEach((el) => {
   if (!el) return;
@@ -4547,7 +4776,7 @@ function softBlur(ctx, w, h, radius) {
 async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   if (state.filter.name === 'none') return;
   const imgData = ctx.getImageData(0, 0, w, h);
-  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth' || state.filter.name === 'dithering' || state.filter.name === 'pixelArt') ? pixelScale : 1;
+  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth' || state.filter.name === 'dithering' || state.filter.name === 'pixelArt' || state.filter.name === 'hyperpop') ? pixelScale : 1;
   const result = await runFilterInWorker(
     state.filter.name,
     imgData,
