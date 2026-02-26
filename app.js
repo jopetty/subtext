@@ -5281,7 +5281,7 @@ if ('serviceWorker' in navigator) {
     }
 
     if (location.protocol === 'https:') {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});
     }
   });
 }

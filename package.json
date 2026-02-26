@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "rev:assets": "node scripts/rev-assets.mjs",
     "test": "npm run test:unit && npm run test:e2e && npm run test:py",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
