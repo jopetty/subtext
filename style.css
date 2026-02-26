@@ -1980,16 +1980,21 @@ input[type="range"]::-moz-range-thumb {
   }
 
   /* Hover/active overrides for buttons that use hardcoded values */
-  .upload-btn:hover,
-  #top-actions .top-action-btn:hover {
+  .upload-btn:hover {
     background: #d4aa80;
   }
 
+  #top-actions .top-action-btn:hover,
   #top-actions .top-action-btn:active {
-    background: #a87e50;
+    background: transparent;
   }
 
   #top-actions .top-action-btn img {
     --top-icon-filter: invert(1);
+  }
+
+  .cycle-btn img {
+    filter: invert(1) brightness(1.08);
+    opacity: 0.95;
   }
 }
