@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$ROOT_DIR/dist-pages"
 
+# Stamp cache-busting query hashes into index/sw before packaging.
+cd "$ROOT_DIR"
+npm run rev:assets >/dev/null
+
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 

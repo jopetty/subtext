@@ -28,11 +28,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Subtext" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="manifest" href="manifest.webmanifest?v=b0bdfc8ddf" />
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=b0bdfc8ddf" />
 </head>
 <body>
 
@@ -43,6 +43,7 @@
       <h1 class="wordmark">Subtext</h1>
       <label class="upload-btn" for="file-input">
         Choose an Image
+        <span class="upload-btn-shortcut">[nn]</span>
         <input type="file" id="file-input" accept="image/*" />
       </label>
       <p class="upload-hint">or drag &amp; drop &middot; paste from clipboard</p>
@@ -138,6 +139,8 @@
               <option value="var(--font-vcr-osd-mono)"    style="font-family:var(--font-vcr-osd-mono)">VCR OSD Mono</option>
               <option value="var(--font-canterbury)"      style="font-family:var(--font-canterbury)">Canterbury</option>
               <option value="var(--font-old-english-five)" style="font-family:var(--font-old-english-five)">Old English Five</option>
+              <option value="var(--font-amarante)"        style="font-family:var(--font-amarante)">Amarante</option>
+              <option value="var(--font-limelight)"       style="font-family:var(--font-limelight)">Limelight</option>
               <option value="var(--font-courier)"         style="font-family:var(--font-courier)">Courier</option>
               <option value="var(--font-coral-pixels)"    style="font-family:var(--font-coral-pixels)">Coral Pixels</option>
               <option value="var(--font-handjet)"         style="font-family:var(--font-handjet)">Handjet</option>
@@ -427,6 +430,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/heic-to@1.3.0/dist/iife/heic-to.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=b0bdfc8ddf"></script>
 </body>
 </html>
