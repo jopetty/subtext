@@ -1208,6 +1208,7 @@ const fontControls   = document.getElementById('font-controls');
 const objectControls = document.getElementById('object-controls');
 const bottomPanel    = document.getElementById('bottom-panel');
 const panelTabBtns   = document.querySelectorAll('.panel-tab');
+const sidebarSectionToggles = document.querySelectorAll('.section-heading-toggle');
 
 const ctrlFont         = document.getElementById('ctrl-font');
 const ctrlFontWrap     = document.getElementById('ctrl-font-wrap');
@@ -3204,6 +3205,27 @@ function switchPanelTab(tabName) {
     if (state.imageLoaded) {
       fitImageToWrapper();
     }
+  });
+}
+
+function setSidebarSectionCollapsed(sectionEl, collapsed) {
+  if (!sectionEl) return;
+  sectionEl.classList.toggle('is-collapsed', collapsed);
+  const toggle = sectionEl.querySelector('.section-heading-toggle');
+  const body = sectionEl.querySelector('.panel-section-body');
+  if (toggle) toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  if (body) body.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+}
+
+function initSidebarSectionToggles() {
+  sidebarSectionToggles.forEach((toggle) => {
+    const section = toggle.closest('.panel-section');
+    if (section) setSidebarSectionCollapsed(section, section.classList.contains('is-collapsed'));
+    toggle.addEventListener('click', () => {
+      const root = toggle.closest('.panel-section');
+      if (!root) return;
+      setSidebarSectionCollapsed(root, !root.classList.contains('is-collapsed'));
+    });
   });
 }
 
@@ -5292,6 +5314,7 @@ function closeRenderedPreviewOverlay() {
 initGuides();
 buildFontDropdown();
 syncFontSelectDisplay();
+initSidebarSectionToggles();
 switchPanelTab('typography'); // set initial data-panel attribute
 exportBtn.addEventListener('click', handleSaveAction);
 copyBtn.addEventListener('click', handleCopyAction);

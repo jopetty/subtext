@@ -118,12 +118,21 @@
         <button class="panel-tab" data-tab="vibe">Vibe</button>
       </div>
 
-      <div id="font-controls">
+      <div id="font-controls" class="panel-section">
 
         <!-- Section heading -->
         <div class="section-heading-row">
-          <span class="control-label section-heading">Typography</span>
+          <button
+            type="button"
+            class="section-heading-toggle"
+            aria-expanded="true"
+            aria-controls="font-controls-body"
+          >
+            <span class="section-disclosure" aria-hidden="true">▸</span>
+            <span class="control-label section-heading">Typography</span>
+          </button>
         </div>
+        <div id="font-controls-body" class="panel-section-body">
 
         <!-- Presets -->
         <div class="controls-row controls-row--presets">
@@ -257,13 +266,22 @@
           </div>
         </div>
 
+        </div>
       </div>
 
       <!-- Object controls -->
-      <div id="object-controls">
+      <div id="object-controls" class="panel-section">
         <div class="section-divider"></div>
         <div class="section-heading-row section-heading-row--object">
-          <span class="control-label section-heading">Object</span>
+          <button
+            type="button"
+            class="section-heading-toggle"
+            aria-expanded="true"
+            aria-controls="object-controls-body"
+          >
+            <span class="section-disclosure" aria-hidden="true">▸</span>
+            <span class="control-label section-heading">Object</span>
+          </button>
           <button
             id="add-object-btn-desktop"
             type="button"
@@ -275,6 +293,7 @@
             <span>Add object</span>
           </button>
         </div>
+        <div id="object-controls-body" class="panel-section-body">
         <div class="controls-row object-add-row">
           <button
             id="add-object-btn"
@@ -322,14 +341,24 @@
             <input type="range" id="ctrl-opacity" min="0.1" max="1" step="0.05" value="1" />
           </div>
         </div>
+        </div>
       </div>
 
       <!-- Vibe section — desktop sidebar only -->
-      <div id="filter-section">
+      <div id="filter-section" class="panel-section">
         <div class="section-divider"></div>
         <div class="section-heading-row">
-          <span class="control-label section-heading">Vibe</span>
+          <button
+            type="button"
+            class="section-heading-toggle"
+            aria-expanded="true"
+            aria-controls="filter-section-body"
+          >
+            <span class="section-disclosure" aria-hidden="true">▸</span>
+            <span class="control-label section-heading">Vibe</span>
+          </button>
         </div>
+        <div id="filter-section-body" class="panel-section-body">
         <div class="controls-row controls-row--vibe-chips">
           <div class="chip-scroller vibe-chips">
             <div class="chip-track vibe-chips-track">
@@ -449,6 +478,7 @@
             <span class="control-label">Bits</span>
             <input type="range" id="ctrl-pixel-bits" min="2" max="8" step="1" value="5" />
           </div>
+        </div>
         </div>
       </div>
 

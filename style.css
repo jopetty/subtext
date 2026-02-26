@@ -1476,6 +1476,34 @@ input[type="range"]::-moz-range-thumb {
   color: var(--ink);
 }
 
+.section-heading-toggle {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  cursor: pointer;
+}
+
+.section-disclosure {
+  display: inline-block;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  transform: rotate(90deg);
+  transform-origin: 50% 52%;
+  transition: transform 0.14s ease;
+}
+
+.section-heading-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* ── Align buttons — segmented control ── */
 
 .btn-group {
@@ -1886,6 +1914,18 @@ input[type="range"]::-moz-range-thumb {
     /* Negative margin counteracts the flex gap so the heading sits
        close to its first content row */
     margin-bottom: -0.7rem;
+  }
+
+  .panel-section.is-collapsed .section-heading-row {
+    margin-bottom: 0;
+  }
+
+  .panel-section.is-collapsed .panel-section-body {
+    display: none;
+  }
+
+  .panel-section.is-collapsed .section-disclosure {
+    transform: rotate(0deg);
   }
 
   .object-add-row {
