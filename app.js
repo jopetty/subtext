@@ -2203,7 +2203,8 @@ function selectField(tf) {
   tf.select();
   syncTextFieldLayering();
   if (shouldRefreshPreviewForSelectionChange()) {
-    scheduleImageFilterRender({ settle: true });
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ settle: true, immediate: true });
   }
   loadFieldStyle(tf);
   updatePanel();
@@ -2222,7 +2223,8 @@ function deselectAll() {
   }
   syncTextFieldLayering();
   if (hadSelection && shouldRefreshPreviewForSelectionChange()) {
-    scheduleImageFilterRender({ settle: true });
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ settle: true, immediate: true });
   }
   updatePanel();
 }
@@ -3948,7 +3950,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   }
 
   const { w, h } = computePreviewTargetSize(quality);
-  const bypassSelectedObject = quality === 'interactive';
+  const bypassSelectedObject = state.filter.applyOnTop && !!state.selectedObject;
   const t = state.filter.intensity / 100;
 
   ensureVaporSrcContext();
