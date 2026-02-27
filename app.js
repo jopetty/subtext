@@ -558,43 +558,108 @@ const FILTERS = {
     label: 'Dithering',
     cssPreview: (t) =>
       `contrast(${1 + 0.22*t}) saturate(${1 - 0.35*t})`,
-    apply(data, w, h, t, _params, pixelScale = 1) {
-      const blend = Math.max(0, Math.min(1, t));
-      const invBlend = 1 - blend;
-      const strength = Math.min(1, blend * 1.35);
-      const levels = Math.max(2, Math.round(8 - 7 * strength));
-      const step = 255 / (levels - 1);
+    apply(data, w, h, t, params = {}, pixelScale = 1) {
+      const intensity = Math.max(0, Math.min(1, t));
+      const monoT = Math.max(0, Math.min(1, (params.mono ?? 0) / 100));
+      const curveT = Math.pow(intensity, 0.85);
+      // Intensity changes tone->radius contrast, not global size.
+      const gamma = 1.14 - 0.46 * curveT;
+      const toneFloor = 0.08 - 0.03 * curveT;
+      const minRadius = 0.085 - 0.01 * curveT;
+      const maxRadius = 0.285 + 0.215 * curveT;
+      const jitterAmp = 0.35 + 0.65 * curveT;
       const patternScale = Math.max(1, Math.round(pixelScale || 1));
+      // Keep the "max" halftone cell feel from current behavior; intensity now
+      // controls dot-size spread inside this cell instead of blending with source.
+      const cell = Math.max(2, Math.round(6 * patternScale));
+      const edge = 0.6 / Math.max(1, cell);
+      const paperR = 245;
+      const paperG = 242;
+      const paperB = 230;
+      const tau = Math.PI / 180;
+      const aC = 15 * tau;
+      const aM = 75 * tau;
+      const aY = 0 * tau;
+      const aK = 45 * tau;
+      const cCos = Math.cos(aC), cSin = Math.sin(aC);
+      const mCos = Math.cos(aM), mSin = Math.sin(aM);
+      const yCos = Math.cos(aY), ySin = Math.sin(aY);
+      const kCos = Math.cos(aK), kSin = Math.sin(aK);
+      const modCell = (v) => {
+        const m = v % cell;
+        return m < 0 ? m + cell : m;
+      };
+      const smooth = (v0, v1, x) => {
+        if (v1 <= v0) return x >= v1 ? 1 : 0;
+        const u = Math.max(0, Math.min(1, (x - v0) / (v1 - v0)));
+        return u * u * (3 - 2 * u);
+      };
+      const dotMask = (x, y, amount, cosA, sinA, jitter) => {
+        const xr = x * cosA - y * sinA;
+        const yr = x * sinA + y * cosA;
+        const fx = (modCell(xr + 0.5 * cell) / cell) - 0.5;
+        const fy = (modCell(yr + 0.5 * cell) / cell) - 0.5;
+        const dist = Math.sqrt(fx * fx + fy * fy);
+        const tone = Math.max(0, Math.min(1, amount));
+        const toneMapped = Math.pow(toneFloor + (1 - toneFloor) * tone, gamma);
+        const radius = Math.max(0, minRadius + (maxRadius - minRadius) * toneMapped + jitter * jitterAmp);
+        const edgeLo = radius - edge;
+        const edgeHi = radius + edge;
+        return 1 - smooth(edgeLo, edgeHi, dist);
+      };
       const bayer4 = [
         [0,  8,  2, 10],
         [12, 4, 14, 6],
         [3, 11, 1,  9],
         [15, 7, 13, 5],
       ];
-      const jitterAmp = step * (0.5 + 0.55 * strength) * strength;
-      const monoMix = Math.max(0, (strength - 0.55) / 0.45) * 0.45;
 
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
           const i = (y * w + x) * 4;
-          const threshold = (bayer4[(Math.floor(y / patternScale)) & 3][(Math.floor(x / patternScale)) & 3] / 15) - 0.5;
-          const jitter = threshold * jitterAmp * 1.12;
-
           const sr = data[i];
           const sg = data[i + 1];
           const sb = data[i + 2];
-          const lm = 0.299 * sr + 0.587 * sg + 0.114 * sb;
-          const r = sr * (1 - monoMix) + lm * monoMix;
-          const g = sg * (1 - monoMix) + lm * monoMix;
-          const b = sb * (1 - monoMix) + lm * monoMix;
+          const lm = (0.299 * sr + 0.587 * sg + 0.114 * sb) / 255;
+          const darkness = 1 - lm;
+          const threshold = (bayer4[(Math.floor(y / patternScale)) & 3][(Math.floor(x / patternScale)) & 3] / 15) - 0.5;
+          const jitter = threshold * 0.045;
 
-          const dr = clamp255(Math.round((r + jitter) / step) * step);
-          const dg = clamp255(Math.round((g + jitter) / step) * step);
-          const db = clamp255(Math.round((b + jitter) / step) * step);
+          // Simple CMYK-ish separation: color always comes from halftone layers.
+          const c0 = 1 - sr / 255;
+          const m0 = 1 - sg / 255;
+          const y0 = 1 - sb / 255;
+          const k0 = Math.min(c0, m0, y0) * (0.58 + 0.35 * darkness);
+          const cAmt = Math.max(0, c0 - k0 * 0.78);
+          const mAmt = Math.max(0, m0 - k0 * 0.78);
+          const yAmt = Math.max(0, y0 - k0 * 0.78);
 
-          data[i]     = clamp255(sr * invBlend + dr * blend);
-          data[i + 1] = clamp255(sg * invBlend + dg * blend);
-          data[i + 2] = clamp255(sb * invBlend + db * blend);
+          const covC = dotMask(x, y, cAmt, cCos, cSin, jitter);
+          const covM = dotMask(x, y, mAmt, mCos, mSin, -jitter * 0.85);
+          const covY = dotMask(x, y, yAmt, yCos, ySin, jitter * 0.65);
+          const covK = dotMask(x, y, k0, kCos, kSin, -jitter * 0.4);
+
+          // Subtractive paper/ink approximation.
+          const hr = paperR
+            * (1 - 0.88 * covC)
+            * (1 - 0.12 * covM)
+            * (1 - 0.06 * covY)
+            * (1 - 0.72 * covK);
+          const hg = paperG
+            * (1 - 0.08 * covC)
+            * (1 - 0.86 * covM)
+            * (1 - 0.08 * covY)
+            * (1 - 0.72 * covK);
+          const hb = paperB
+            * (1 - 0.06 * covC)
+            * (1 - 0.12 * covM)
+            * (1 - 0.88 * covY)
+            * (1 - 0.72 * covK);
+
+          const hLm = 0.299 * hr + 0.587 * hg + 0.114 * hb;
+          data[i] = clamp255(hr * (1 - monoT) + hLm * monoT);
+          data[i + 1] = clamp255(hg * (1 - monoT) + hLm * monoT);
+          data[i + 2] = clamp255(hb * (1 - monoT) + hLm * monoT);
         }
       }
     },
@@ -1159,7 +1224,7 @@ const FILTERS = {
 const FILTER_PARAM_DEFAULTS = {
   film:        { grain: 10 },
   redshift:    {},
-  dithering:   {},
+  dithering:   { mono: 0 },
   pixelArt:    { bits: 5 },
   swirl:       {},
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
@@ -2033,11 +2098,13 @@ function showUpload() {
   filterIntensityRow.classList.add('hidden');
   filterLayerRow.classList.add('hidden');
   filterFilmControls.classList.add('hidden');
+  filterDitherControls.classList.add('hidden');
   filterVaporControls.classList.add('hidden');
   filterDarkAcadControls.classList.add('hidden');
   filterSolarpunkControls.classList.add('hidden');
   filterHegsethControls.classList.add('hidden');
   filterHyperpopControls.classList.add('hidden');
+  filterPixelArtControls.classList.add('hidden');
   ctrlFilterIntensity.value = 75;
   ctrlFilterOnTop.checked = false;
   if (_filterRenderRaf) {
@@ -3729,6 +3796,7 @@ const filterLayerRow       = document.getElementById('filter-layer-row');
 const ctrlFilterIntensity  = document.getElementById('ctrl-filter-intensity');
 const ctrlFilterOnTop      = document.getElementById('ctrl-filter-on-top');
 const filterFilmControls   = document.getElementById('filter-film-controls');
+const filterDitherControls = document.getElementById('filter-dithering-controls');
 const filterVaporControls  = document.getElementById('filter-vaporwave-controls');
 const filterDarkAcadControls = document.getElementById('filter-darkacademia-controls');
 const filterSolarpunkControls = document.getElementById('filter-solarpunk-controls');
@@ -3736,6 +3804,7 @@ const filterHegsethControls = document.getElementById('filter-hegseth-controls')
 const filterHyperpopControls = document.getElementById('filter-hyperpop-controls');
 const filterPixelArtControls = document.getElementById('filter-pixelart-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
+const ctrlDitherMono       = document.getElementById('ctrl-dither-mono');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
 const ctrlScanlineSize     = document.getElementById('ctrl-scanline-size');
 const ctrlChroma           = document.getElementById('ctrl-chroma');
@@ -5055,6 +5124,7 @@ function updateVibeExtraControls() {
   }
   filterLayerRow.classList.toggle('hidden', isNone);
   filterFilmControls.classList.toggle('hidden', name !== 'film');
+  filterDitherControls.classList.toggle('hidden', name !== 'dithering');
   filterVaporControls.classList.toggle('hidden', name !== 'vaporwave');
   filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
   filterSolarpunkControls.classList.toggle('hidden', name !== 'solarpunk');
@@ -5087,6 +5157,8 @@ filterChips.forEach(chip => {
     // Sync extra slider values to defaults
     if (state.filter.name === 'film') {
       ctrlGrain.value = state.filter.params.grain;
+    } else if (state.filter.name === 'dithering') {
+      ctrlDitherMono.value = state.filter.params.mono ?? 0;
     } else if (state.filter.name === 'vaporwave') {
       ctrlScanlines.value    = state.filter.params.scanlines;
       ctrlScanlineSize.value = state.filter.params.scanlineSize;
@@ -5123,6 +5195,11 @@ ctrlFilterOnTop.addEventListener('change', () => {
 
 ctrlGrain.addEventListener('input', () => {
   state.filter.params.grain = parseInt(ctrlGrain.value);
+  scheduleImageFilterRender({ interactive: true });
+});
+
+ctrlDitherMono.addEventListener('input', () => {
+  state.filter.params.mono = parseInt(ctrlDitherMono.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
@@ -5184,6 +5261,7 @@ ctrlPixelBits.addEventListener('input', () => {
 [
   ctrlFilterIntensity,
   ctrlGrain,
+  ctrlDitherMono,
   ctrlScanlines,
   ctrlScanlineSize,
   ctrlChroma,
