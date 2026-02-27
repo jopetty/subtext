@@ -760,6 +760,69 @@ const FILTERS = {
     },
   },
 
+  swirl: {
+    label: 'Swirl',
+    cssPreview: (t) =>
+      `contrast(${1 + 0.05*t})`,
+    apply(data, w, h, t, _params = {}, _pixelScale = 1, scratch) {
+      const intensity = Math.max(0, Math.min(1, t));
+      if (intensity <= 0) return;
+      const localScratch = scratch || getFilterScratch('swirl', data.length);
+      const orig = localScratch.orig;
+      orig.set(data);
+
+      const cx = (w - 1) * 0.5;
+      const cy = (h - 1) * 0.5;
+      const invCx = cx > 0 ? 1 / cx : 0;
+      const invCy = cy > 0 ? 1 / cy : 0;
+      const intensityShaped = Math.pow(intensity, 1.08);
+      const maxAngle = 9.0 * intensityShaped; // radians
+
+      for (let y = 0; y < h; y++) {
+        const dy = y - cy;
+        for (let x = 0; x < w; x++) {
+          const dx = x - cx;
+          const nx = dx * invCx;
+          const ny = dy * invCy;
+          const r = Math.hypot(nx, ny);
+          const i = (y * w + x) * 4;
+          if (r >= 1) {
+            data[i] = orig[i];
+            data[i + 1] = orig[i + 1];
+            data[i + 2] = orig[i + 2];
+            continue;
+          }
+
+          const falloff = Math.pow(1 - r, 2.2);
+          const angle = maxAngle * falloff;
+          const s = Math.sin(-angle);
+          const c = Math.cos(-angle);
+          const sx = cx + dx * c - dy * s;
+          const sy = cy + dx * s + dy * c;
+          const sxClamped = sx < 0 ? 0 : sx > (w - 1) ? (w - 1) : sx;
+          const syClamped = sy < 0 ? 0 : sy > (h - 1) ? (h - 1) : sy;
+          const x0 = sxClamped | 0;
+          const y0 = syClamped | 0;
+          const x1 = x0 < (w - 1) ? x0 + 1 : x0;
+          const y1 = y0 < (h - 1) ? y0 + 1 : y0;
+          const fx = sxClamped - x0;
+          const fy = syClamped - y0;
+          const i00 = (y0 * w + x0) * 4;
+          const i10 = (y0 * w + x1) * 4;
+          const i01 = (y1 * w + x0) * 4;
+          const i11 = (y1 * w + x1) * 4;
+          const w00 = (1 - fx) * (1 - fy);
+          const w10 = fx * (1 - fy);
+          const w01 = (1 - fx) * fy;
+          const w11 = fx * fy;
+          data[i] = clamp255(orig[i00] * w00 + orig[i10] * w10 + orig[i01] * w01 + orig[i11] * w11);
+          data[i + 1] = clamp255(orig[i00 + 1] * w00 + orig[i10 + 1] * w10 + orig[i01 + 1] * w01 + orig[i11 + 1] * w11);
+          data[i + 2] = clamp255(orig[i00 + 2] * w00 + orig[i10 + 2] * w10 + orig[i01 + 2] * w01 + orig[i11 + 2] * w11);
+        }
+      }
+    },
+  },
+
   twilight: {
     label: 'Twilight',
     cssPreview: (t) =>
@@ -1098,6 +1161,7 @@ const FILTER_PARAM_DEFAULTS = {
   redshift:    {},
   dithering:   {},
   pixelArt:    { bits: 5 },
+  swirl:       {},
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
   hyperpop:    { angle: 0 },
   twilight:    {},
@@ -3704,7 +3768,7 @@ let grainBuffer    = null;
 let grainBufferW   = 0;
 let grainBufferH   = 0;
 let grainNoiseTs   = 0;
-const GPU_PREVIEW_FILTERS = new Set(['vaporwave', 'hegseth', 'pixelArt', 'hyperpop']);
+const GPU_PREVIEW_FILTERS = new Set(['vaporwave', 'hegseth', 'pixelArt', 'hyperpop', 'swirl']);
 const gpuPreview = {
   gl: null,
   program: null,
@@ -4069,6 +4133,27 @@ vec3 applyHyperpop(vec2 uv) {
   return mix(src0, clamp(c, 0.0, 1.0), mixT);
 }
 
+vec3 applySwirl(vec2 uv) {
+  float t = clamp(u_intensity, 0.0, 1.0);
+  if (t <= 0.0001) return texture2D(u_tex, uv).rgb;
+  vec2 d = uv - vec2(0.5);
+  vec2 nd = d * 2.0;
+  float r = length(nd);
+  if (r >= 1.0) return texture2D(u_tex, uv).rgb;
+  float shaped = pow(t, 1.08);
+  float maxAngle = 9.0 * shaped;
+  float falloff = pow(max(0.0, 1.0 - r), 2.2);
+  float a = maxAngle * falloff;
+  float s = sin(a);
+  float c = cos(a);
+  vec2 sd = vec2(
+    d.x * c - d.y * s,
+    d.x * s + d.y * c
+  );
+  vec2 suv = clamp(vec2(0.5) + sd, vec2(0.0), vec2(1.0));
+  return texture2D(u_tex, suv).rgb;
+}
+
 void main() {
   vec3 c = texture2D(u_tex, v_uv).rgb;
   if (u_filterType < 1.5) {
@@ -4077,8 +4162,10 @@ void main() {
     c = applyHegseth(v_uv);
   } else if (u_filterType < 3.5) {
     c = applyPixelArt(v_uv);
-  } else {
+  } else if (u_filterType < 4.5) {
     c = applyHyperpop(v_uv);
+  } else {
+    c = applySwirl(v_uv);
   }
   gl_FragColor = vec4(sat(c.r), sat(c.g), sat(c.b), 1.0);
 }
@@ -4153,7 +4240,15 @@ function renderGpuPreviewFilter(sourceCanvas, w, h, name, intensity, params, pix
   gl.uniform2f(gpuPreview.loc.uTexel, 1 / Math.max(1, w), 1 / Math.max(1, h));
   gl.uniform1f(
     gpuPreview.loc.uFilterType,
-    name === 'hegseth' ? 2 : name === 'pixelArt' ? 3 : name === 'hyperpop' ? 4 : 1
+    name === 'hegseth'
+      ? 2
+      : name === 'pixelArt'
+        ? 3
+        : name === 'hyperpop'
+          ? 4
+          : name === 'swirl'
+            ? 5
+            : 1
   );
   gl.uniform1f(gpuPreview.loc.uIntensity, intensity);
   gl.uniform1f(gpuPreview.loc.uChroma, params?.chroma ?? 20);
