@@ -418,6 +418,7 @@
               <button class="control-chip vibe-chip" data-filter="redshift">Redshift</button>
               <button class="control-chip vibe-chip" data-filter="dithering">Dithering</button>
               <button class="control-chip vibe-chip" data-filter="pixelArt">Pixel art</button>
+              <button class="control-chip vibe-chip" data-filter="swirl">Swirl</button>
               <button class="control-chip vibe-chip" data-filter="twilight">Twilight</button>
               <button class="control-chip vibe-chip hidden" data-filter="mexico" aria-hidden="true" tabindex="-1">Mexico</button>
               <button class="control-chip vibe-chip" data-filter="darkAcademia">Dark Academia</button>
@@ -449,6 +450,14 @@
           <div class="control-group control-group--size">
             <span class="control-label">Grain</span>
             <input type="range" id="ctrl-grain" min="0" max="100" step="1" value="10" />
+          </div>
+        </div>
+
+        <!-- Dithering-specific controls -->
+        <div id="filter-dithering-controls" class="controls-row hidden">
+          <div class="control-group control-group--size">
+            <span class="control-label">Color</span>
+            <input type="range" id="ctrl-dither-mono" min="0" max="100" step="1" value="0" />
           </div>
         </div>
 
