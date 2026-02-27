@@ -1305,6 +1305,25 @@ let _filterWorker = null;
 let _filterWorkerUrl = null;
 let _filterWorkerReqId = 0;
 const _filterWorkerPending = new Map();
+let _appIsBackgrounded = false;
+let _resumeRenderQueued = false;
+
+function teardownFilterWorker() {
+  for (const [, pending] of _filterWorkerPending) {
+    pending.reject(new Error('Filter worker terminated'));
+  }
+  _filterWorkerPending.clear();
+  try {
+    _filterWorker?.terminate();
+  } catch {}
+  _filterWorker = null;
+  if (_filterWorkerUrl) {
+    try {
+      URL.revokeObjectURL(_filterWorkerUrl);
+    } catch {}
+    _filterWorkerUrl = null;
+  }
+}
 
 function ensureFilterWorker() {
   if (_filterWorker) return _filterWorker;
@@ -1343,6 +1362,9 @@ function ensureFilterWorker() {
 
 async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelScale = 1, opts = {}) {
   if (name === 'none') return { data: imgData.data, usedWorker: false, fellBack: false };
+  if (_appIsBackgrounded || document.visibilityState === 'hidden') {
+    return { data: imgData.data, usedWorker: false, fellBack: false };
+  }
   if (opts.forceMainThread) {
     const scratch = getFilterScratch(name, imgData.data.length);
     FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
@@ -1388,12 +1410,12 @@ async function runFilterInWorker(name, imgData, w, h, intensity, params, pixelSc
     });
     return { data: out, usedWorker: true, fellBack: false };
   } catch {
+    if (_appIsBackgrounded || document.visibilityState === 'hidden') {
+      return { data: imgData.data, usedWorker: false, fellBack: false };
+    }
     // Disable broken/hung worker and continue with deterministic fallback.
     perf.workerFallbacks++;
-    try {
-      _filterWorker?.terminate();
-    } catch {}
-    _filterWorker = null;
+    teardownFilterWorker();
     const scratch = getFilterScratch(name, imgData.data.length);
     FILTERS[name].apply(imgData.data, w, h, intensity, params, pixelScale, scratch);
     return { data: imgData.data, usedWorker: false, fellBack: true };
@@ -3863,6 +3885,60 @@ const previewPixelSourceCache = {
   data: null,
 };
 
+function resetPreviewSourceCaches() {
+  previewGpuSourceCache.w = 0;
+  previewGpuSourceCache.h = 0;
+  previewGpuSourceCache.key = '';
+  previewGpuSourceCache.dirty = true;
+  previewPixelSourceCache.data = null;
+  previewPixelSourceCache.w = 0;
+  previewPixelSourceCache.h = 0;
+  previewPixelSourceCache.key = '';
+  previewPixelSourceCache.dirty = true;
+}
+
+function collapseCanvasSurface(el) {
+  if (!el) return;
+  el.style.display = 'none';
+  if (el.width > 1) el.width = 1;
+  if (el.height > 1) el.height = 1;
+}
+
+function releaseBackgroundPreviewResources() {
+  resetPreviewSourceCaches();
+  collapseCanvasSurface(finalPreviewEl);
+  collapseCanvasSurface(chromaEl);
+  collapseCanvasSurface(solarpunkEl);
+  collapseCanvasSurface(hegsethEl);
+  collapseCanvasSurface(mexicoEl);
+  collapseCanvasSurface(grainEl);
+  collapseCanvasSurface(scanlineEl);
+  collapseCanvasSurface(vignetteEl);
+  collapseCanvasSurface(gpuPreviewEl);
+  if (vaporSrcCanvas) {
+    vaporSrcCanvas.width = 1;
+    vaporSrcCanvas.height = 1;
+  }
+  if (_contrastCanvas) {
+    _contrastCanvas.width = 1;
+    _contrastCanvas.height = 1;
+  }
+  if (gpuPreview.gl) {
+    try {
+      const loseCtx = gpuPreview.gl.getExtension('WEBGL_lose_context');
+      loseCtx?.loseContext();
+    } catch {}
+  }
+  gpuPreview.gl = null;
+  gpuPreview.program = null;
+  gpuPreview.posBuffer = null;
+  gpuPreview.tex = null;
+  gpuPreview.loc = null;
+  gpuPreview.ready = false;
+  gpuPreview.failed = false;
+  teardownFilterWorker();
+}
+
 function markPreviewSourceDirty() {
   previewGpuSourceCache.dirty = true;
   previewPixelSourceCache.dirty = true;
@@ -5035,6 +5111,12 @@ let _filterRenderRaf = 0;
 let _resizeRaf = 0;
 
 function runScheduledPreviewRender() {
+  if (_appIsBackgrounded || document.visibilityState === 'hidden') {
+    _resumeRenderQueued = true;
+    _previewRenderPending = false;
+    perf.previewPendingCount = 0;
+    return;
+  }
   if (_previewRenderInFlight) {
     _previewRenderPending = true;
     perf.previewPendingCount = Math.max(perf.previewPendingCount, 1);
@@ -5071,6 +5153,10 @@ function runScheduledPreviewRender() {
 }
 
 function scheduleImageFilterRender(opts = {}) {
+  if (_appIsBackgrounded || document.visibilityState === 'hidden') {
+    _resumeRenderQueued = true;
+    return;
+  }
   perf.previewInputTs = performance.now();
   if (opts.interactive) {
     _previewInteractionUntilTs = performance.now() + PREVIEW_INTERACTION_WINDOW_MS;
@@ -5109,6 +5195,53 @@ function scheduleImageFilterRender(opts = {}) {
     _filterRenderRaf = 0;
     runScheduledPreviewRender();
   });
+}
+
+function pausePreviewRendering() {
+  if (_filterRenderRaf) {
+    cancelAnimationFrame(_filterRenderRaf);
+    _filterRenderRaf = 0;
+  }
+  if (_previewThrottleTimer) {
+    clearTimeout(_previewThrottleTimer);
+    _previewThrottleTimer = 0;
+  }
+  _previewInteractionUntilTs = 0;
+  _previewSettleRequested = false;
+  _previewRenderPending = false;
+  _previewRenderSeq++;
+  perf.previewPendingCount = 0;
+}
+
+function recoverFromDiscardedEditorSession() {
+  if (!editorScreen.classList.contains('active') || !state.imageLoaded) return false;
+  if (baseImage?.naturalWidth > 0 && baseImage?.naturalHeight > 0) return false;
+  showUpload();
+  alert('This tab was suspended by your browser. Please re-open your image.');
+  return true;
+}
+
+function handleAppBecameHidden() {
+  if (_appIsBackgrounded) return;
+  _appIsBackgrounded = true;
+  _resumeRenderQueued = _resumeRenderQueued || state.imageLoaded;
+  pausePreviewRendering();
+  releaseBackgroundPreviewResources();
+}
+
+function handleAppBecameVisible() {
+  if (!_appIsBackgrounded) return;
+  _appIsBackgrounded = false;
+  const recovered = recoverFromDiscardedEditorSession();
+  if (recovered) {
+    _resumeRenderQueued = false;
+    return;
+  }
+  if (_resumeRenderQueued && state.imageLoaded) {
+    _resumeRenderQueued = false;
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ settle: true, immediate: true, noThrottle: true });
+  }
 }
 
 function updateVibeExtraControls() {
@@ -6217,6 +6350,24 @@ window.addEventListener('resize', () => {
       scheduleImageFilterRender({ settle: true });
     }
   });
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    handleAppBecameHidden();
+  } else {
+    handleAppBecameVisible();
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  handleAppBecameHidden();
+});
+
+window.addEventListener('pageshow', () => {
+  if (document.visibilityState !== 'hidden') {
+    handleAppBecameVisible();
+  }
 });
 
 // ─── Prevent accidental back/navigation ──────────────────────────────────────
