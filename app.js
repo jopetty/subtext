@@ -572,6 +572,8 @@ const FILTERS = {
       // Keep the "max" halftone cell feel from current behavior; intensity now
       // controls dot-size spread inside this cell instead of blending with source.
       const cell = Math.max(2, Math.round(6 * patternScale));
+      const cellMid = Math.floor(cell * 0.5);
+      const cellHalf = 0.5 * cell;
       const edge = 0.6 / Math.max(1, cell);
       const paperR = 245;
       const paperG = 242;
@@ -607,19 +609,6 @@ const FILTERS = {
         const u = Math.max(0, Math.min(1, (x - v0) / (v1 - v0)));
         return u * u * (3 - 2 * u);
       };
-      const dotMask = (x, y, amount, cosA, sinA, jitter) => {
-        const xr = x * cosA - y * sinA;
-        const yr = x * sinA + y * cosA;
-        const fx = (modCell(xr + 0.5 * cell) / cell) - 0.5;
-        const fy = (modCell(yr + 0.5 * cell) / cell) - 0.5;
-        const dist = Math.sqrt(fx * fx + fy * fy);
-        const tone = Math.max(0, Math.min(1, amount));
-        const toneMapped = Math.pow(toneFloor + (1 - toneFloor) * tone, gamma);
-        const radius = Math.max(0, minRadius + (maxRadius - minRadius) * toneMapped + jitter * jitterAmp);
-        const edgeLo = radius - edge;
-        const edgeHi = radius + edge;
-        return 1 - smooth(edgeLo, edgeHi, dist);
-      };
       const bayer4 = [
         [0,  8,  2, 10],
         [12, 4, 14, 6],
@@ -627,27 +616,87 @@ const FILTERS = {
         [15, 7, 13, 5],
       ];
       const localScratch = scratch || getFilterScratch('dithering', data.length);
-      const gw = Math.max(1, Math.ceil(w / cell));
-      const gh = Math.max(1, Math.ceil(h / cell));
-      const gridSize = gw * gh;
-      const ensureGrid = (key) => {
-        if (!localScratch[key] || localScratch[key].length !== gridSize) {
-          localScratch[key] = new Float32Array(gridSize);
+      const ensureScratch = (key, len, Type = Float32Array) => {
+        if (!localScratch[key] || localScratch[key].length !== len) {
+          localScratch[key] = new Type(len);
         }
         return localScratch[key];
       };
-      const gridC = ensureGrid('gridC');
-      const gridM = ensureGrid('gridM');
-      const gridY = ensureGrid('gridY');
-      const gridK = ensureGrid('gridK');
-      const gridOutC = ensureGrid('gridOutC');
-      const gridOutM = ensureGrid('gridOutM');
-      const gridOutY = ensureGrid('gridOutY');
-      const gridOutK = ensureGrid('gridOutK');
+      const gw = Math.max(1, Math.ceil(w / cell));
+      const gh = Math.max(1, Math.ceil(h / cell));
+      const gridSize = gw * gh;
+      const gridC = ensureScratch('gridC', gridSize);
+      const gridM = ensureScratch('gridM', gridSize);
+      const gridY = ensureScratch('gridY', gridSize);
+      const gridK = ensureScratch('gridK', gridSize);
+      const gridOutC = ensureScratch('gridOutC', gridSize);
+      const gridOutM = ensureScratch('gridOutM', gridSize);
+      const gridOutY = ensureScratch('gridOutY', gridSize);
+      const gridOutK = ensureScratch('gridOutK', gridSize);
+      const cellAmtC = ensureScratch('cellAmtC', gridSize);
+      const cellAmtM = ensureScratch('cellAmtM', gridSize);
+      const cellAmtY = ensureScratch('cellAmtY', gridSize);
+      const cellAmtK = ensureScratch('cellAmtK', gridSize);
+      const cellToneC = ensureScratch('cellToneC', gridSize);
+      const cellToneM = ensureScratch('cellToneM', gridSize);
+      const cellToneY = ensureScratch('cellToneY', gridSize);
+      const cellToneK = ensureScratch('cellToneK', gridSize);
+      const cellSat = ensureScratch('cellSat', gridSize);
+      const cellBleed = ensureScratch('cellBleed', gridSize);
+      const cellWell = ensureScratch('cellWell', gridSize);
+      const cellChromaWell = ensureScratch('cellChromaWell', gridSize);
+      const cellDeepBoost = ensureScratch('cellDeepBoost', gridSize);
+      const cellHardWell = ensureScratch('cellHardWell', gridSize);
+      const cellKMergeScale = ensureScratch('cellKMergeScale', gridSize);
+      const cellKWellScale = ensureScratch('cellKWellScale', gridSize);
+      const xCell = ensureScratch('ditherXCell', w, Uint32Array);
+      const xCellNext = ensureScratch('ditherXCellNext', w, Uint32Array);
+      const xCellLerp = ensureScratch('ditherXCellLerp', w);
+      const xBayer = ensureScratch('ditherXBayer', w, Uint8Array);
+      const rowCellBase = ensureScratch('ditherRowCellBase', h, Uint32Array);
+      const rowCellBaseNext = ensureScratch('ditherRowCellBaseNext', h, Uint32Array);
+      const yCellLerp = ensureScratch('ditherYCellLerp', h);
+      const yBayer = ensureScratch('ditherYBayer', h, Uint8Array);
+      const xCCos = ensureScratch('ditherXCCos', w);
+      const xCSin = ensureScratch('ditherXCSin', w);
+      const xMCos = ensureScratch('ditherXMCos', w);
+      const xMSin = ensureScratch('ditherXMSin', w);
+      const xYCos = ensureScratch('ditherXYCos', w);
+      const xYSin = ensureScratch('ditherXYSin', w);
+      const xKCos = ensureScratch('ditherXKCos', w);
+      const xKSin = ensureScratch('ditherXKSin', w);
+      const xBleedA = ensureScratch('ditherXBleedA', w);
+      const xBleedB = ensureScratch('ditherXBleedB', w);
+      const bleedDenA = Math.max(1, cell * 0.78);
+      const bleedDenB = Math.max(1, cell * 0.92);
+      for (let x = 0; x < w; x++) {
+        const gx0 = Math.min(gw - 1, Math.floor(x / cell));
+        xCell[x] = gx0;
+        xCellNext[x] = Math.min(gw - 1, gx0 + 1);
+        xCellLerp[x] = Math.min(1, Math.max(0, ((x + 0.5) - gx0 * cell) / Math.max(1, cell)));
+        xBayer[x] = (Math.floor(x / patternScale)) & 3;
+        xCCos[x] = x * cCos;
+        xCSin[x] = x * cSin;
+        xMCos[x] = x * mCos;
+        xMSin[x] = x * mSin;
+        xYCos[x] = x * yCos;
+        xYSin[x] = x * ySin;
+        xKCos[x] = x * kCos;
+        xKSin[x] = x * kSin;
+        xBleedA[x] = (x * 0.81) / bleedDenA;
+        xBleedB[x] = (x * 1.09) / bleedDenB;
+      }
+      for (let y = 0; y < h; y++) {
+        const gy0 = Math.min(gh - 1, Math.floor(y / cell));
+        rowCellBase[y] = gy0 * gw;
+        rowCellBaseNext[y] = Math.min(gh - 1, gy0 + 1) * gw;
+        yCellLerp[y] = Math.min(1, Math.max(0, ((y + 0.5) - gy0 * cell) / Math.max(1, cell)));
+        yBayer[y] = (Math.floor(y / patternScale)) & 3;
+      }
       for (let gy = 0; gy < gh; gy++) {
-        const sy = Math.min(h - 1, gy * cell + Math.floor(cell * 0.5));
+        const sy = Math.min(h - 1, gy * cell + cellMid);
         for (let gx = 0; gx < gw; gx++) {
-          const sx = Math.min(w - 1, gx * cell + Math.floor(cell * 0.5));
+          const sx = Math.min(w - 1, gx * cell + cellMid);
           const srcIdx = (sy * w + sx) * 4;
           const sr = data[srcIdx] / 255;
           const sg = data[srcIdx + 1] / 255;
@@ -698,20 +747,32 @@ const FILTERS = {
       diffuseAtkinsonGrid(gridM, gridOutM, 0.55 - 0.05 * curveT, 0.02);
       diffuseAtkinsonGrid(gridY, gridOutY, 0.58 - 0.04 * curveT, 0.015);
       diffuseAtkinsonGrid(gridK, gridOutK, 0.50 - 0.07 * curveT, 0.03);
-
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = (y * w + x) * 4;
-          const sr = data[i];
-          const sg = data[i + 1];
-          const sb = data[i + 2];
+      const radiusScale = maxRadius - minRadius;
+      const dotCovFromRot = (xr, yr, baseTone, jitterValue) => {
+        const fx = (modCell(xr + cellHalf) / cell) - 0.5;
+        const fy = (modCell(yr + cellHalf) / cell) - 0.5;
+        const dist = Math.sqrt(fx * fx + fy * fy);
+        const radius = Math.max(0, minRadius + radiusScale * baseTone + jitterValue * jitterAmp);
+        const edgeLo = radius - edge;
+        const edgeHi = radius + edge;
+        return 1 - smooth(edgeLo, edgeHi, dist);
+      };
+      const bilerpCell = (arr, i00, i10, i01, i11, tx, ty) => {
+        const top = arr[i00] + (arr[i10] - arr[i00]) * tx;
+        const bottom = arr[i01] + (arr[i11] - arr[i01]) * tx;
+        return top + (bottom - top) * ty;
+      };
+      for (let gy = 0; gy < gh; gy++) {
+        const sy = Math.min(h - 1, gy * cell + cellMid);
+        for (let gx = 0; gx < gw; gx++) {
+          const sx = Math.min(w - 1, gx * cell + cellMid);
+          const srcIdx = (sy * w + sx) * 4;
+          const sr = data[srcIdx];
+          const sg = data[srcIdx + 1];
+          const sb = data[srcIdx + 2];
           const lm = (0.299 * sr + 0.587 * sg + 0.114 * sb) / 255;
           const darkness = 1 - lm;
           const srcSat = (Math.max(sr, sg, sb) - Math.min(sr, sg, sb)) / 255;
-          const threshold = (bayer4[(Math.floor(y / patternScale)) & 3][(Math.floor(x / patternScale)) & 3] / 15) - 0.5;
-          const jitter = threshold * 0.045;
-
-          // Simple CMYK-ish separation: color always comes from halftone layers.
           const c0 = 1 - sr / 255;
           const m0 = 1 - sg / 255;
           const y0 = 1 - sb / 255;
@@ -721,8 +782,6 @@ const FILTERS = {
           let mAmt = Math.max(0, m0 - k0 * 0.78);
           let yAmt = Math.max(0, y0 - k0 * 0.78);
           let kAmt = k0;
-          const gx = Math.min(gw - 1, Math.floor(x / cell));
-          const gy = Math.min(gh - 1, Math.floor(y / cell));
           const gi = gy * gw + gx;
           const mixCoverage = (base, out, boost = 1) => {
             const lifted = base + (1 - base) * out * diffusionMix * boost;
@@ -733,37 +792,72 @@ const FILTERS = {
           mAmt = mixCoverage(mAmt, gridOutM[gi], 0.72);
           yAmt = mixCoverage(yAmt, gridOutY[gi], 0.60);
           kAmt = mixCoverage(kAmt, gridOutK[gi], 0.92);
-
-          const covC = dotMask(x, y, cAmt, cCos, cSin, jitter);
-          const covM = dotMask(x, y, mAmt, mCos, mSin, -jitter * 0.85);
-          const covY = dotMask(x, y, yAmt, yCos, ySin, jitter * 0.65);
-          const covK = dotMask(x, y, kAmt, kCos, kSin, -jitter * 0.4);
-
-          // Subtractive paper/ink approximation.
-          const hr = paperR
-            * (1 - 0.88 * covC)
-            * (1 - 0.12 * covM)
-            * (1 - 0.06 * covY)
-            * (1 - 0.72 * covK);
-          const hg = paperG
-            * (1 - 0.08 * covC)
-            * (1 - 0.86 * covM)
-            * (1 - 0.08 * covY)
-            * (1 - 0.72 * covK);
-          const hb = paperB
-            * (1 - 0.06 * covC)
-            * (1 - 0.12 * covM)
-            * (1 - 0.88 * covY)
-            * (1 - 0.72 * covK);
-
-          // Let deep shadows close up by making neighboring dots bleed together,
-          // instead of blending in a hidden solid panel behind the halftone.
-          const shadowStart = 0.72 - 0.10 * curveT;
-          const shadowEnd = 0.90 - 0.04 * curveT;
-          const bleedBase = smooth(shadowStart, shadowEnd, darkness) * (0.22 + 0.78 * curveT);
+          cellAmtC[gi] = cAmt;
+          cellAmtM[gi] = mAmt;
+          cellAmtY[gi] = yAmt;
+          cellAmtK[gi] = kAmt;
+          cellToneC[gi] = Math.pow(toneFloor + (1 - toneFloor) * cAmt, gamma);
+          cellToneM[gi] = Math.pow(toneFloor + (1 - toneFloor) * mAmt, gamma);
+          cellToneY[gi] = Math.pow(toneFloor + (1 - toneFloor) * yAmt, gamma);
+          cellToneK[gi] = Math.pow(toneFloor + (1 - toneFloor) * kAmt, gamma);
+          const bleedBase = smooth(0.72 - 0.10 * curveT, 0.90 - 0.04 * curveT, darkness) * (0.22 + 0.78 * curveT);
           const wellBase = smooth(0.84 - 0.08 * curveT, 0.985 - 0.02 * curveT, darkness) * Math.pow(curveT, 0.9);
-          const bleedFieldA = Math.sin((x * 0.81 + y * 1.17) / Math.max(1, cell * 0.78) + threshold * 9.7) * 0.5 + 0.5;
-          const bleedFieldB = Math.sin((x * 1.09 - y * 0.73) / Math.max(1, cell * 0.92) - threshold * 7.1) * 0.5 + 0.5;
+          cellSat[gi] = srcSat;
+          cellBleed[gi] = bleedBase;
+          cellWell[gi] = wellBase;
+          cellChromaWell[gi] = wellBase * srcSat;
+          cellDeepBoost[gi] = Math.max(0, (darkness - (0.88 - 0.06 * curveT)) / Math.max(0.02, 0.12 - 0.04 * curveT));
+          cellHardWell[gi] = Math.max(0, (darkness - (0.955 - 0.03 * curveT)) / Math.max(0.008, 0.035 - 0.015 * curveT));
+          cellKMergeScale[gi] = 1.45 * (1 - 0.45 * srcSat);
+          cellKWellScale[gi] = 1.20 * (1 - 0.55 * srcSat);
+        }
+      }
+
+      for (let y = 0; y < h; y++) {
+        const yBase = rowCellBase[y];
+        const yBaseNext = rowCellBaseNext[y];
+        const ty = yCellLerp[y];
+        const yThresholdRow = bayer4[yBayer[y]];
+        const cXOff = -y * cSin;
+        const cYOff = y * cCos;
+        const mXOff = -y * mSin;
+        const mYOff = y * mCos;
+        const yXOff = -y * ySin;
+        const yYOff = y * yCos;
+        const kXOff = -y * kSin;
+        const kYOff = y * kCos;
+        const bleedAY = (y * 1.17) / bleedDenA;
+        const bleedBY = (-y * 0.73) / bleedDenB;
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const gx0 = xCell[x];
+          const gx1 = xCellNext[x];
+          const tx = xCellLerp[x];
+          const gi00 = yBase + gx0;
+          const gi10 = yBase + gx1;
+          const gi01 = yBaseNext + gx0;
+          const gi11 = yBaseNext + gx1;
+          const threshold = (yThresholdRow[xBayer[x]] / 15) - 0.5;
+          const jitter = threshold * 0.045;
+          const cAmt = bilerpCell(cellAmtC, gi00, gi10, gi01, gi11, tx, ty);
+          const mAmt = bilerpCell(cellAmtM, gi00, gi10, gi01, gi11, tx, ty);
+          const yAmt = bilerpCell(cellAmtY, gi00, gi10, gi01, gi11, tx, ty);
+          const kAmt = bilerpCell(cellAmtK, gi00, gi10, gi01, gi11, tx, ty);
+          const srcSat = bilerpCell(cellSat, gi00, gi10, gi01, gi11, tx, ty);
+          const bleedBase = bilerpCell(cellBleed, gi00, gi10, gi01, gi11, tx, ty);
+          const wellBase = bilerpCell(cellWell, gi00, gi10, gi01, gi11, tx, ty);
+          const chromaWellT = bilerpCell(cellChromaWell, gi00, gi10, gi01, gi11, tx, ty);
+          const toneC = bilerpCell(cellToneC, gi00, gi10, gi01, gi11, tx, ty);
+          const toneM = bilerpCell(cellToneM, gi00, gi10, gi01, gi11, tx, ty);
+          const toneY = bilerpCell(cellToneY, gi00, gi10, gi01, gi11, tx, ty);
+          const toneK = bilerpCell(cellToneK, gi00, gi10, gi01, gi11, tx, ty);
+          const covC = dotCovFromRot(xCCos[x] + cXOff, xCSin[x] + cYOff, toneC, jitter);
+          const covM = dotCovFromRot(xMCos[x] + mXOff, xMSin[x] + mYOff, toneM, -jitter * 0.85);
+          const covY = dotCovFromRot(xYCos[x] + yXOff, xYSin[x] + yYOff, toneY, jitter * 0.65);
+          const covK = dotCovFromRot(xKCos[x] + kXOff, xKSin[x] + kYOff, toneK, -jitter * 0.4);
+
+          const bleedFieldA = Math.sin(xBleedA[x] + bleedAY + threshold * 9.7) * 0.5 + 0.5;
+          const bleedFieldB = Math.sin(xBleedB[x] + bleedBY - threshold * 7.1) * 0.5 + 0.5;
           const mergeCoverage = (cov, amt, field, strengthMul = 1) => {
             const bleedT = bleedBase * strengthMul * (0.55 + 0.45 * field);
             if (bleedT <= 0.0001) return cov;
@@ -781,12 +875,21 @@ const FILTERS = {
           let inkCovC = mergeCoverage(covC, cAmt, bleedFieldA, 0.85);
           let inkCovM = mergeCoverage(covM, mAmt, bleedFieldB, 0.90);
           let inkCovY = mergeCoverage(covY, yAmt, 1 - bleedFieldA, 0.70);
-          let inkCovK = mergeCoverage(covK, kAmt, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.45 * (1 - 0.45 * srcSat));
+          let inkCovK = mergeCoverage(
+            covK,
+            kAmt,
+            bleedFieldA * 0.65 + bleedFieldB * 0.35,
+            bilerpCell(cellKMergeScale, gi00, gi10, gi01, gi11, tx, ty)
+          );
           inkCovC = forceWell(inkCovC, cAmt, bleedFieldA, 0.55);
           inkCovM = forceWell(inkCovM, mAmt, bleedFieldB, 0.60);
           inkCovY = forceWell(inkCovY, yAmt, 1 - bleedFieldA, 0.40);
-          inkCovK = forceWell(inkCovK, kAmt, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.20 * (1 - 0.55 * srcSat));
-          const chromaWellT = wellBase * srcSat;
+          inkCovK = forceWell(
+            inkCovK,
+            kAmt,
+            bleedFieldA * 0.65 + bleedFieldB * 0.35,
+            bilerpCell(cellKWellScale, gi00, gi10, gi01, gi11, tx, ty)
+          );
           if (chromaWellT > 0.0001) {
             const richC = Math.min(1, cAmt + chromaWellT * (0.35 + 0.45 * cAmt));
             const richM = Math.min(1, mAmt + chromaWellT * (0.35 + 0.45 * mAmt));
@@ -795,9 +898,9 @@ const FILTERS = {
             inkCovM = Math.max(inkCovM, richM * (0.40 + 0.60 * chromaWellT));
             inkCovY = Math.max(inkCovY, richY * (0.40 + 0.60 * chromaWellT));
           }
-          const deepShadowBoost = Math.max(0, (darkness - (0.88 - 0.06 * curveT)) / Math.max(0.02, 0.12 - 0.04 * curveT));
+          const deepShadowBoost = bilerpCell(cellDeepBoost, gi00, gi10, gi01, gi11, tx, ty);
           inkCovK = Math.max(inkCovK, Math.min(1, deepShadowBoost * (0.82 + 0.18 * (0.5 + 0.5 * bleedFieldA)) * (1 - 0.55 * srcSat)));
-          const hardWellT = Math.max(0, (darkness - (0.955 - 0.03 * curveT)) / Math.max(0.008, 0.035 - 0.015 * curveT));
+          const hardWellT = bilerpCell(cellHardWell, gi00, gi10, gi01, gi11, tx, ty);
           if (hardWellT > 0) {
             inkCovK = Math.max(inkCovK, Math.min(1, hardWellT * (1 - 0.65 * srcSat)));
             const colorHardWell = hardWellT * srcSat;
