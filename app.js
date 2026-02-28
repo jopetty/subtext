@@ -576,6 +576,19 @@ const FILTERS = {
       const paperR = 245;
       const paperG = 242;
       const paperB = 230;
+      const parseHexColor = (hex, fallback) => {
+        const value = typeof hex === 'string' ? hex.trim() : '';
+        if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+          return [
+            parseInt(value.slice(1, 3), 16),
+            parseInt(value.slice(3, 5), 16),
+            parseInt(value.slice(5, 7), 16),
+          ];
+        }
+        return fallback;
+      };
+      const [monoFgR, monoFgG, monoFgB] = parseHexColor(params.fgColor, [35, 24, 21]);
+      const [monoBgR, monoBgG, monoBgB] = parseHexColor(params.bgColor, [paperR, paperG, paperB]);
       const tau = Math.PI / 180;
       const aC = 15 * tau;
       const aM = 75 * tau;
@@ -656,10 +669,66 @@ const FILTERS = {
             * (1 - 0.88 * covY)
             * (1 - 0.72 * covK);
 
-          const hLm = 0.299 * hr + 0.587 * hg + 0.114 * hb;
-          data[i] = clamp255(hr * (1 - monoT) + hLm * monoT);
-          data[i + 1] = clamp255(hg * (1 - monoT) + hLm * monoT);
-          data[i + 2] = clamp255(hb * (1 - monoT) + hLm * monoT);
+          // Let deep shadows close up by making neighboring dots bleed together,
+          // instead of blending in a hidden solid panel behind the halftone.
+          const shadowStart = 0.72 - 0.10 * curveT;
+          const shadowEnd = 0.90 - 0.04 * curveT;
+          const bleedBase = smooth(shadowStart, shadowEnd, darkness) * (0.22 + 0.78 * curveT);
+          const wellBase = smooth(0.84 - 0.08 * curveT, 0.985 - 0.02 * curveT, darkness) * Math.pow(curveT, 0.9);
+          const bleedFieldA = Math.sin((x * 0.81 + y * 1.17) / Math.max(1, cell * 0.78) + threshold * 9.7) * 0.5 + 0.5;
+          const bleedFieldB = Math.sin((x * 1.09 - y * 0.73) / Math.max(1, cell * 0.92) - threshold * 7.1) * 0.5 + 0.5;
+          const mergeCoverage = (cov, amt, field, strengthMul = 1) => {
+            const bleedT = bleedBase * strengthMul * (0.55 + 0.45 * field);
+            if (bleedT <= 0.0001) return cov;
+            const seed = cov + amt * (0.22 + 0.58 * bleedT) + (field - 0.5) * (0.08 + 0.06 * bleedT);
+            const merged = smooth(0.52 - 0.22 * bleedT, 0.96 - 0.08 * bleedT, seed);
+            return Math.max(cov, merged * bleedT);
+          };
+          const forceWell = (cov, amt, field, amountMul = 1) => {
+            if (wellBase <= 0.0001) return cov;
+            const fieldMix = 0.45 + 0.55 * field;
+            const seed = cov + amt * amountMul + fieldMix * 0.18;
+            const well = smooth(0.58 - 0.18 * wellBase, 0.92 - 0.16 * wellBase, seed);
+            return Math.max(cov, well * wellBase);
+          };
+          let inkCovC = mergeCoverage(covC, cAmt, bleedFieldA, 0.85);
+          let inkCovM = mergeCoverage(covM, mAmt, bleedFieldB, 0.90);
+          let inkCovY = mergeCoverage(covY, yAmt, 1 - bleedFieldA, 0.70);
+          let inkCovK = mergeCoverage(covK, k0, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.45);
+          inkCovC = forceWell(inkCovC, cAmt, bleedFieldA, 0.55);
+          inkCovM = forceWell(inkCovM, mAmt, bleedFieldB, 0.60);
+          inkCovY = forceWell(inkCovY, yAmt, 1 - bleedFieldA, 0.40);
+          inkCovK = forceWell(inkCovK, k0, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.20);
+          const deepShadowBoost = Math.max(0, (darkness - (0.88 - 0.06 * curveT)) / Math.max(0.02, 0.12 - 0.04 * curveT));
+          inkCovK = Math.max(inkCovK, Math.min(1, deepShadowBoost * (0.82 + 0.18 * (0.5 + 0.5 * bleedFieldA))));
+          const hardWellT = Math.max(0, (darkness - (0.955 - 0.03 * curveT)) / Math.max(0.008, 0.035 - 0.015 * curveT));
+          if (hardWellT > 0) {
+            inkCovK = Math.max(inkCovK, Math.min(1, hardWellT));
+          }
+          const inkR = paperR
+            * (1 - 0.88 * inkCovC)
+            * (1 - 0.12 * inkCovM)
+            * (1 - 0.06 * inkCovY)
+            * (1 - 0.88 * inkCovK);
+          const inkG = paperG
+            * (1 - 0.08 * inkCovC)
+            * (1 - 0.86 * inkCovM)
+            * (1 - 0.08 * inkCovY)
+            * (1 - 0.88 * inkCovK);
+          const inkB = paperB
+            * (1 - 0.06 * inkCovC)
+            * (1 - 0.12 * inkCovM)
+            * (1 - 0.88 * inkCovY)
+            * (1 - 0.88 * inkCovK);
+
+          const hLm = 0.299 * inkR + 0.587 * inkG + 0.114 * inkB;
+          const inkMix = 1 - (hLm / 255);
+          const monoR = monoBgR * (1 - inkMix) + monoFgR * inkMix;
+          const monoG = monoBgG * (1 - inkMix) + monoFgG * inkMix;
+          const monoB = monoBgB * (1 - inkMix) + monoFgB * inkMix;
+          data[i] = clamp255(inkR * (1 - monoT) + monoR * monoT);
+          data[i + 1] = clamp255(inkG * (1 - monoT) + monoG * monoT);
+          data[i + 2] = clamp255(inkB * (1 - monoT) + monoB * monoT);
         }
       }
     },
@@ -1224,7 +1293,7 @@ const FILTERS = {
 const FILTER_PARAM_DEFAULTS = {
   film:        { grain: 10 },
   redshift:    {},
-  dithering:   { mono: 0 },
+  dithering:   { mono: 0, fgColor: '#231815', bgColor: '#f5f2e6' },
   pixelArt:    { bits: 5 },
   swirl:       {},
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
@@ -3827,6 +3896,8 @@ const filterHyperpopControls = document.getElementById('filter-hyperpop-controls
 const filterPixelArtControls = document.getElementById('filter-pixelart-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
 const ctrlDitherMono       = document.getElementById('ctrl-dither-mono');
+const ctrlDitherFg         = document.getElementById('ctrl-dither-fg');
+const ctrlDitherBg         = document.getElementById('ctrl-dither-bg');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
 const ctrlScanlineSize     = document.getElementById('ctrl-scanline-size');
 const ctrlChroma           = document.getElementById('ctrl-chroma');
@@ -5292,6 +5363,8 @@ filterChips.forEach(chip => {
       ctrlGrain.value = state.filter.params.grain;
     } else if (state.filter.name === 'dithering') {
       ctrlDitherMono.value = state.filter.params.mono ?? 0;
+      ctrlDitherFg.value = state.filter.params.fgColor ?? '#231815';
+      ctrlDitherBg.value = state.filter.params.bgColor ?? '#f5f2e6';
     } else if (state.filter.name === 'vaporwave') {
       ctrlScanlines.value    = state.filter.params.scanlines;
       ctrlScanlineSize.value = state.filter.params.scanlineSize;
@@ -5333,6 +5406,16 @@ ctrlGrain.addEventListener('input', () => {
 
 ctrlDitherMono.addEventListener('input', () => {
   state.filter.params.mono = parseInt(ctrlDitherMono.value);
+  scheduleImageFilterRender({ interactive: true });
+});
+
+ctrlDitherFg.addEventListener('input', () => {
+  state.filter.params.fgColor = ctrlDitherFg.value;
+  scheduleImageFilterRender({ interactive: true });
+});
+
+ctrlDitherBg.addEventListener('input', () => {
+  state.filter.params.bgColor = ctrlDitherBg.value;
   scheduleImageFilterRender({ interactive: true });
 });
 
@@ -5395,6 +5478,8 @@ ctrlPixelBits.addEventListener('input', () => {
   ctrlFilterIntensity,
   ctrlGrain,
   ctrlDitherMono,
+  ctrlDitherFg,
+  ctrlDitherBg,
   ctrlScanlines,
   ctrlScanlineSize,
   ctrlChroma,
