@@ -5149,6 +5149,8 @@ function hideLegacyFilterOverlays() {
 const PREVIEW_INTERACTION_FPS = 60;
 const PREVIEW_INTERACTIVE_SCALE = 0.72;
 const PREVIEW_INTERACTIVE_MAX_PIXELS = 900000;
+const PREVIEW_INTERACTIVE_SCALE_HEAVY = 0.54;
+const PREVIEW_INTERACTIVE_MAX_PIXELS_HEAVY = 430000;
 const PREVIEW_INTERACTION_WINDOW_MS = 160;
 const SETTLE_MODE_MIN_SAMPLES = 16;
 const SETTLE_MODE_TOTAL_MS_HIGH = 26;
@@ -5162,6 +5164,8 @@ let _previewRenderInFlight = false;
 let _previewRenderPending = false;
 let _previewThrottleTimer = 0;
 let _lastPreviewRenderTs = 0;
+const INTERACTIVE_HEAVY_FILTERS = new Set(['dithering']);
+const INTERACTIVE_WORKER_FILTERS = new Set(['dithering']);
 
 function computePreviewTargetSize(quality = 'settle') {
   const renderedW = Math.max(1, baseImage.offsetWidth || 1);
@@ -5173,11 +5177,13 @@ function computePreviewTargetSize(quality = 'settle') {
     };
   }
 
-  let targetW = renderedW * PREVIEW_INTERACTIVE_SCALE;
-  let targetH = renderedH * PREVIEW_INTERACTIVE_SCALE;
+  const isHeavy = INTERACTIVE_HEAVY_FILTERS.has(state.filter.name);
+  let targetW = renderedW * (isHeavy ? PREVIEW_INTERACTIVE_SCALE_HEAVY : PREVIEW_INTERACTIVE_SCALE);
+  let targetH = renderedH * (isHeavy ? PREVIEW_INTERACTIVE_SCALE_HEAVY : PREVIEW_INTERACTIVE_SCALE);
+  const maxPixels = isHeavy ? PREVIEW_INTERACTIVE_MAX_PIXELS_HEAVY : PREVIEW_INTERACTIVE_MAX_PIXELS;
   const area = targetW * targetH;
-  if (area > PREVIEW_INTERACTIVE_MAX_PIXELS) {
-    const downscale = Math.sqrt(PREVIEW_INTERACTIVE_MAX_PIXELS / area);
+  if (area > maxPixels) {
+    const downscale = Math.sqrt(maxPixels / area);
     targetW *= downscale;
     targetH *= downscale;
   }
@@ -5316,7 +5322,9 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const filterStartTs = performance.now();
   const settleExecMode = quality === 'settle' ? pickSettleExecMode() : 'main';
   perf.settleExecMode = settleExecMode;
-  const preferMainThread = quality === 'interactive' || settleExecMode === 'main';
+  const preferMainThread =
+    (quality === 'interactive' && !INTERACTIVE_WORKER_FILTERS.has(name)) ||
+    settleExecMode === 'main';
   const filterResult = await runFilterInWorker(
     name,
     previewData,
