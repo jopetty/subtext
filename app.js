@@ -3838,6 +3838,43 @@ const ctrlHegsethAngle     = document.getElementById('ctrl-hegseth-angle');
 const ctrlHegsethGhostDistance = document.getElementById('ctrl-hegseth-ghost-distance');
 const ctrlHyperpopAngle    = document.getElementById('ctrl-hyperpop-angle');
 const ctrlPixelBits        = document.getElementById('ctrl-pixel-bits');
+const FILTER_INTENSITY_LABELS = {
+  hegseth: 'Beers',
+  pixelArt: 'Style',
+};
+const FILTER_EXTRA_CONTROL_PANELS = {
+  film: filterFilmControls,
+  dithering: filterDitherControls,
+  vaporwave: filterVaporControls,
+  darkAcademia: filterDarkAcadControls,
+  solarpunk: filterSolarpunkControls,
+  hegseth: filterHegsethControls,
+  hyperpop: filterHyperpopControls,
+  pixelArt: filterPixelArtControls,
+};
+const FILTER_PARAM_CONTROLS = {
+  film: [{ key: 'grain', el: ctrlGrain }],
+  dithering: [{ key: 'mono', el: ctrlDitherMono }],
+  vaporwave: [
+    { key: 'scanlines', el: ctrlScanlines },
+    { key: 'scanlineSize', el: ctrlScanlineSize },
+    { key: 'chroma', el: ctrlChroma },
+  ],
+  darkAcademia: [
+    { key: 'grain', el: ctrlDaGrain },
+    { key: 'vignette', el: ctrlVignette },
+  ],
+  solarpunk: [
+    { key: 'bloom', el: ctrlBloom },
+    { key: 'haze', el: ctrlHaze },
+  ],
+  hegseth: [
+    { key: 'angle', el: ctrlHegsethAngle },
+    { key: 'ghostDistance', el: ctrlHegsethGhostDistance },
+  ],
+  hyperpop: [{ key: 'angle', el: ctrlHyperpopAngle }],
+  pixelArt: [{ key: 'bits', el: ctrlPixelBits }],
+};
 
 // ── Vibe preview overlays ──────────────────────────────────────────────────────
 // Film: random grain canvas  (mix-blend-mode: overlay)
@@ -5249,21 +5286,13 @@ function updateVibeExtraControls() {
   const isNone = name === 'none';
   filterIntensityRow.classList.toggle('hidden', isNone);
   if (filterIntensityLabel) {
-    filterIntensityLabel.textContent = name === 'hegseth'
-      ? 'Beers'
-      : name === 'pixelArt'
-        ? 'Style'
-        : 'Intensity';
+    filterIntensityLabel.textContent = FILTER_INTENSITY_LABELS[name] || 'Intensity';
   }
   filterLayerRow.classList.toggle('hidden', isNone);
-  filterFilmControls.classList.toggle('hidden', name !== 'film');
-  filterDitherControls.classList.toggle('hidden', name !== 'dithering');
-  filterVaporControls.classList.toggle('hidden', name !== 'vaporwave');
-  filterDarkAcadControls.classList.toggle('hidden', name !== 'darkAcademia');
-  filterSolarpunkControls.classList.toggle('hidden', name !== 'solarpunk');
-  filterHegsethControls.classList.toggle('hidden', name !== 'hegseth');
-  filterHyperpopControls.classList.toggle('hidden', name !== 'hyperpop');
-  filterPixelArtControls.classList.toggle('hidden', name !== 'pixelArt');
+  Object.entries(FILTER_EXTRA_CONTROL_PANELS).forEach(([filterName, panel]) => {
+    if (!panel) return;
+    panel.classList.toggle('hidden', filterName !== name);
+  });
   ctrlFilterOnTop.checked = !!state.filter.applyOnTop;
 }
 
@@ -5287,29 +5316,16 @@ filterChips.forEach(chip => {
     state.filter.name = chip.dataset.filter;
     // Reset to defaults for this vibe
     state.filter.params = { ...(FILTER_PARAM_DEFAULTS[state.filter.name] || {}) };
-    // Sync extra slider values to defaults
-    if (state.filter.name === 'film') {
-      ctrlGrain.value = state.filter.params.grain;
-    } else if (state.filter.name === 'dithering') {
-      ctrlDitherMono.value = state.filter.params.mono ?? 0;
-    } else if (state.filter.name === 'vaporwave') {
-      ctrlScanlines.value    = state.filter.params.scanlines;
-      ctrlScanlineSize.value = state.filter.params.scanlineSize;
-      ctrlChroma.value       = state.filter.params.chroma;
-    } else if (state.filter.name === 'darkAcademia') {
-      ctrlDaGrain.value  = state.filter.params.grain;
-      ctrlVignette.value = state.filter.params.vignette;
-    } else if (state.filter.name === 'solarpunk') {
-      ctrlBloom.value = state.filter.params.bloom;
-      ctrlHaze.value  = state.filter.params.haze;
-    } else if (state.filter.name === 'hegseth') {
-      ctrlHegsethAngle.value = state.filter.params.angle;
-      ctrlHegsethGhostDistance.value = state.filter.params.ghostDistance;
-    } else if (state.filter.name === 'hyperpop') {
-      ctrlHyperpopAngle.value = state.filter.params.angle;
-    } else if (state.filter.name === 'pixelArt') {
-      ctrlPixelBits.value = state.filter.params.bits;
-    }
+    // Sync extra control values to defaults.
+    const controlBindings = FILTER_PARAM_CONTROLS[state.filter.name] || [];
+    controlBindings.forEach(({ key, el }) => {
+      if (!el) return;
+      const fallback = Number(el.defaultValue || el.value || 0);
+      const rawValue = state.filter.params[key];
+      const nextValue = Number(rawValue ?? fallback);
+      state.filter.params[key] = nextValue;
+      el.value = String(nextValue);
+    });
     updateVibeExtraControls();
     scheduleImageFilterRender({ settle: true });
   });
@@ -5326,86 +5342,19 @@ ctrlFilterOnTop.addEventListener('change', () => {
   scheduleImageFilterRender({ settle: true });
 });
 
-ctrlGrain.addEventListener('input', () => {
-  state.filter.params.grain = parseInt(ctrlGrain.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlDitherMono.addEventListener('input', () => {
-  state.filter.params.mono = parseInt(ctrlDitherMono.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlScanlines.addEventListener('input', () => {
-  state.filter.params.scanlines = parseInt(ctrlScanlines.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlScanlineSize.addEventListener('input', () => {
-  state.filter.params.scanlineSize = parseInt(ctrlScanlineSize.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlChroma.addEventListener('input', () => {
-  state.filter.params.chroma = parseInt(ctrlChroma.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlDaGrain.addEventListener('input', () => {
-  state.filter.params.grain = parseInt(ctrlDaGrain.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlVignette.addEventListener('input', () => {
-  state.filter.params.vignette = parseInt(ctrlVignette.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlBloom.addEventListener('input', () => {
-  state.filter.params.bloom = parseInt(ctrlBloom.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlHaze.addEventListener('input', () => {
-  state.filter.params.haze = parseInt(ctrlHaze.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlHegsethAngle.addEventListener('input', () => {
-  state.filter.params.angle = parseInt(ctrlHegsethAngle.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlHegsethGhostDistance.addEventListener('input', () => {
-  state.filter.params.ghostDistance = parseInt(ctrlHegsethGhostDistance.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlHyperpopAngle.addEventListener('input', () => {
-  state.filter.params.angle = parseInt(ctrlHyperpopAngle.value);
-  scheduleImageFilterRender({ interactive: true });
-});
-
-ctrlPixelBits.addEventListener('input', () => {
-  state.filter.params.bits = parseInt(ctrlPixelBits.value);
-  scheduleImageFilterRender({ interactive: true });
+Object.values(FILTER_PARAM_CONTROLS).forEach((bindings) => {
+  bindings.forEach(({ key, el }) => {
+    if (!el) return;
+    el.addEventListener('input', () => {
+      state.filter.params[key] = parseInt(el.value, 10);
+      scheduleImageFilterRender({ interactive: true });
+    });
+  });
 });
 
 [
   ctrlFilterIntensity,
-  ctrlGrain,
-  ctrlDitherMono,
-  ctrlScanlines,
-  ctrlScanlineSize,
-  ctrlChroma,
-  ctrlDaGrain,
-  ctrlVignette,
-  ctrlBloom,
-  ctrlHaze,
-  ctrlHegsethAngle,
-  ctrlHegsethGhostDistance,
-  ctrlHyperpopAngle,
-  ctrlPixelBits,
+  ...Object.values(FILTER_PARAM_CONTROLS).flatMap((bindings) => bindings.map((binding) => binding.el)),
 ].forEach((el) => {
   if (!el) return;
   el.addEventListener('change', () => {

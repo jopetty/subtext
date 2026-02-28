@@ -13,3 +13,9 @@ dist-pages/
 lut_trainer/**/*.jpg
 lut_trainer/**/*.jpeg
 lut_trainer/**/*.png
+
+# Vibe trainer dataset images
+vibe_trainer/**/*.jpg
+vibe_trainer/**/*.jpeg
+vibe_trainer/**/*.png
+vibe_trainer/**/*.webp

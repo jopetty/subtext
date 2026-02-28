@@ -1,0 +1,37 @@
+{
+  "dataset": "dark_academia",
+  "dataset_path": "/Users/jacksonpetty/Development/subtext/subtext/vibe_trainer/dark_academia",
+  "algorithm": "custom",
+  "intensity_for_preds": 1.0,
+  "quality_for_preds": 95,
+  "num_inputs": 2,
+  "num_train_inputs": 2,
+  "num_val_inputs": 0,
+  "num_train_pairs": 0,
+  "ignored_files": [],
+  "standalone_style_refs": [
+    "angel_out.webp",
+    "facade_out.webp",
+    "statue_out.webp"
+  ],
+  "train_avg_mae": null,
+  "train_avg_rmse": null,
+  "val_avg_mae": null,
+  "val_avg_rmse": null,
+  "per_image": [
+    {
+      "key": "tower",
+      "split": "train",
+      "in": "tower_in.png",
+      "out": null,
+      "pred": "tower_pred.jpg"
+    },
+    {
+      "key": "vcr",
+      "split": "train",
+      "in": "vcr_in.jpg",
+      "out": null,
+      "pred": "vcr_pred.jpg"
+    }
+  ]
+}
