@@ -558,7 +558,7 @@ const FILTERS = {
     label: 'Dithering',
     cssPreview: (t) =>
       `contrast(${1 + 0.22*t}) saturate(${1 - 0.35*t})`,
-    apply(data, w, h, t, params = {}, pixelScale = 1) {
+    apply(data, w, h, t, params = {}, pixelScale = 1, scratch) {
       const intensity = Math.max(0, Math.min(1, t));
       const monoT = Math.max(0, Math.min(1, (params.mono ?? 0) / 100));
       const curveT = Math.pow(intensity, 0.85);
@@ -626,6 +626,78 @@ const FILTERS = {
         [3, 11, 1,  9],
         [15, 7, 13, 5],
       ];
+      const localScratch = scratch || getFilterScratch('dithering', data.length);
+      const gw = Math.max(1, Math.ceil(w / cell));
+      const gh = Math.max(1, Math.ceil(h / cell));
+      const gridSize = gw * gh;
+      const ensureGrid = (key) => {
+        if (!localScratch[key] || localScratch[key].length !== gridSize) {
+          localScratch[key] = new Float32Array(gridSize);
+        }
+        return localScratch[key];
+      };
+      const gridC = ensureGrid('gridC');
+      const gridM = ensureGrid('gridM');
+      const gridY = ensureGrid('gridY');
+      const gridK = ensureGrid('gridK');
+      const gridOutC = ensureGrid('gridOutC');
+      const gridOutM = ensureGrid('gridOutM');
+      const gridOutY = ensureGrid('gridOutY');
+      const gridOutK = ensureGrid('gridOutK');
+      for (let gy = 0; gy < gh; gy++) {
+        const sy = Math.min(h - 1, gy * cell + Math.floor(cell * 0.5));
+        for (let gx = 0; gx < gw; gx++) {
+          const sx = Math.min(w - 1, gx * cell + Math.floor(cell * 0.5));
+          const srcIdx = (sy * w + sx) * 4;
+          const sr = data[srcIdx] / 255;
+          const sg = data[srcIdx + 1] / 255;
+          const sb = data[srcIdx + 2] / 255;
+          const lm = 0.299 * sr + 0.587 * sg + 0.114 * sb;
+          const darkness = 1 - lm;
+          const c0 = 1 - sr;
+          const m0 = 1 - sg;
+          const y0 = 1 - sb;
+          const k0 = Math.min(c0, m0, y0) * (0.58 + 0.35 * darkness);
+          const gi = gy * gw + gx;
+          gridC[gi] = Math.max(0, c0 - k0 * 0.78);
+          gridM[gi] = Math.max(0, m0 - k0 * 0.78);
+          gridY[gi] = Math.max(0, y0 - k0 * 0.78);
+          gridK[gi] = k0;
+          gridOutC[gi] = 0;
+          gridOutM[gi] = 0;
+          gridOutY[gi] = 0;
+          gridOutK[gi] = 0;
+        }
+      }
+      const diffuseAtkinsonGrid = (channel, out, thresholdBase, darkBoost = 0) => {
+        for (let gy = 0; gy < gh; gy++) {
+          for (let gx = 0; gx < gw; gx++) {
+            const gi = gy * gw + gx;
+            const oldVal = channel[gi];
+            const threshold = thresholdBase - oldVal * darkBoost;
+            const next = oldVal >= threshold ? 1 : 0;
+            out[gi] = next;
+            const err = (oldVal - next) / 8;
+            if (err === 0) continue;
+            if (gx + 1 < gw) channel[gi + 1] += err;
+            if (gx + 2 < gw) channel[gi + 2] += err;
+            if (gy + 1 < gh) {
+              const row1 = gi + gw;
+              if (gx > 0) channel[row1 - 1] += err;
+              channel[row1] += err;
+              if (gx + 1 < gw) channel[row1 + 1] += err;
+            }
+            if (gy + 2 < gh) {
+              channel[gi + 2 * gw] += err;
+            }
+          }
+        }
+      };
+      const diffusionMix = 0.12 + 0.38 * curveT;
+      diffuseAtkinsonGrid(gridC, gridOutC, 0.56 - 0.05 * curveT, 0.02);
+      diffuseAtkinsonGrid(gridM, gridOutM, 0.55 - 0.05 * curveT, 0.02);
+      diffuseAtkinsonGrid(gridY, gridOutY, 0.58 - 0.04 * curveT, 0.015);
+      diffuseAtkinsonGrid(gridK, gridOutK, 0.50 - 0.07 * curveT, 0.03);
 
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -635,6 +707,7 @@ const FILTERS = {
           const sb = data[i + 2];
           const lm = (0.299 * sr + 0.587 * sg + 0.114 * sb) / 255;
           const darkness = 1 - lm;
+          const srcSat = (Math.max(sr, sg, sb) - Math.min(sr, sg, sb)) / 255;
           const threshold = (bayer4[(Math.floor(y / patternScale)) & 3][(Math.floor(x / patternScale)) & 3] / 15) - 0.5;
           const jitter = threshold * 0.045;
 
@@ -642,15 +715,29 @@ const FILTERS = {
           const c0 = 1 - sr / 255;
           const m0 = 1 - sg / 255;
           const y0 = 1 - sb / 255;
-          const k0 = Math.min(c0, m0, y0) * (0.58 + 0.35 * darkness);
-          const cAmt = Math.max(0, c0 - k0 * 0.78);
-          const mAmt = Math.max(0, m0 - k0 * 0.78);
-          const yAmt = Math.max(0, y0 - k0 * 0.78);
+          const kRichness = 1 - Math.min(0.7, srcSat * (0.32 + 0.18 * curveT));
+          const k0 = Math.min(c0, m0, y0) * (0.58 + 0.35 * darkness) * kRichness;
+          let cAmt = Math.max(0, c0 - k0 * 0.78);
+          let mAmt = Math.max(0, m0 - k0 * 0.78);
+          let yAmt = Math.max(0, y0 - k0 * 0.78);
+          let kAmt = k0;
+          const gx = Math.min(gw - 1, Math.floor(x / cell));
+          const gy = Math.min(gh - 1, Math.floor(y / cell));
+          const gi = gy * gw + gx;
+          const mixCoverage = (base, out, boost = 1) => {
+            const lifted = base + (1 - base) * out * diffusionMix * boost;
+            const carved = base * (1 - (1 - out) * diffusionMix * 0.28);
+            return Math.max(0, Math.min(1, out >= 0.5 ? lifted : carved));
+          };
+          cAmt = mixCoverage(cAmt, gridOutC[gi], 0.70);
+          mAmt = mixCoverage(mAmt, gridOutM[gi], 0.72);
+          yAmt = mixCoverage(yAmt, gridOutY[gi], 0.60);
+          kAmt = mixCoverage(kAmt, gridOutK[gi], 0.92);
 
           const covC = dotMask(x, y, cAmt, cCos, cSin, jitter);
           const covM = dotMask(x, y, mAmt, mCos, mSin, -jitter * 0.85);
           const covY = dotMask(x, y, yAmt, yCos, ySin, jitter * 0.65);
-          const covK = dotMask(x, y, k0, kCos, kSin, -jitter * 0.4);
+          const covK = dotMask(x, y, kAmt, kCos, kSin, -jitter * 0.4);
 
           // Subtractive paper/ink approximation.
           const hr = paperR
@@ -694,16 +781,31 @@ const FILTERS = {
           let inkCovC = mergeCoverage(covC, cAmt, bleedFieldA, 0.85);
           let inkCovM = mergeCoverage(covM, mAmt, bleedFieldB, 0.90);
           let inkCovY = mergeCoverage(covY, yAmt, 1 - bleedFieldA, 0.70);
-          let inkCovK = mergeCoverage(covK, k0, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.45);
+          let inkCovK = mergeCoverage(covK, kAmt, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.45 * (1 - 0.45 * srcSat));
           inkCovC = forceWell(inkCovC, cAmt, bleedFieldA, 0.55);
           inkCovM = forceWell(inkCovM, mAmt, bleedFieldB, 0.60);
           inkCovY = forceWell(inkCovY, yAmt, 1 - bleedFieldA, 0.40);
-          inkCovK = forceWell(inkCovK, k0, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.20);
+          inkCovK = forceWell(inkCovK, kAmt, bleedFieldA * 0.65 + bleedFieldB * 0.35, 1.20 * (1 - 0.55 * srcSat));
+          const chromaWellT = wellBase * srcSat;
+          if (chromaWellT > 0.0001) {
+            const richC = Math.min(1, cAmt + chromaWellT * (0.35 + 0.45 * cAmt));
+            const richM = Math.min(1, mAmt + chromaWellT * (0.35 + 0.45 * mAmt));
+            const richY = Math.min(1, yAmt + chromaWellT * (0.35 + 0.45 * yAmt));
+            inkCovC = Math.max(inkCovC, richC * (0.40 + 0.60 * chromaWellT));
+            inkCovM = Math.max(inkCovM, richM * (0.40 + 0.60 * chromaWellT));
+            inkCovY = Math.max(inkCovY, richY * (0.40 + 0.60 * chromaWellT));
+          }
           const deepShadowBoost = Math.max(0, (darkness - (0.88 - 0.06 * curveT)) / Math.max(0.02, 0.12 - 0.04 * curveT));
-          inkCovK = Math.max(inkCovK, Math.min(1, deepShadowBoost * (0.82 + 0.18 * (0.5 + 0.5 * bleedFieldA))));
+          inkCovK = Math.max(inkCovK, Math.min(1, deepShadowBoost * (0.82 + 0.18 * (0.5 + 0.5 * bleedFieldA)) * (1 - 0.55 * srcSat)));
           const hardWellT = Math.max(0, (darkness - (0.955 - 0.03 * curveT)) / Math.max(0.008, 0.035 - 0.015 * curveT));
           if (hardWellT > 0) {
-            inkCovK = Math.max(inkCovK, Math.min(1, hardWellT));
+            inkCovK = Math.max(inkCovK, Math.min(1, hardWellT * (1 - 0.65 * srcSat)));
+            const colorHardWell = hardWellT * srcSat;
+            if (colorHardWell > 0.0001) {
+              inkCovC = Math.max(inkCovC, Math.min(1, cAmt + colorHardWell * 0.90));
+              inkCovM = Math.max(inkCovM, Math.min(1, mAmt + colorHardWell * 0.95));
+              inkCovY = Math.max(inkCovY, Math.min(1, yAmt + colorHardWell * 0.95));
+            }
           }
           const inkR = paperR
             * (1 - 0.88 * inkCovC)
