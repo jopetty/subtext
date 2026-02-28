@@ -456,8 +456,16 @@
         <!-- Dithering-specific controls -->
         <div id="filter-dithering-controls" class="controls-row hidden">
           <div class="control-group control-group--size">
-            <span class="control-label">Color</span>
+            <span class="control-label">Mono</span>
             <input type="range" id="ctrl-dither-mono" min="0" max="100" step="1" value="0" />
+          </div>
+          <div class="control-group control-group--color">
+            <span class="control-label">Dots</span>
+            <input type="color" id="ctrl-dither-fg" value="#231815" />
+          </div>
+          <div class="control-group control-group--color">
+            <span class="control-label">Paper</span>
+            <input type="color" id="ctrl-dither-bg" value="#f5f2e6" />
           </div>
         </div>
 

@@ -558,7 +558,7 @@ const FILTERS = {
     label: 'Dithering',
     cssPreview: (t) =>
       `contrast(${1 + 0.22*t}) saturate(${1 - 0.35*t})`,
-    apply(data, w, h, t, params = {}, pixelScale = 1) {
+    apply(data, w, h, t, params = {}, pixelScale = 1, scratch) {
       const intensity = Math.max(0, Math.min(1, t));
       const monoT = Math.max(0, Math.min(1, (params.mono ?? 0) / 100));
       const curveT = Math.pow(intensity, 0.85);
@@ -572,10 +572,25 @@ const FILTERS = {
       // Keep the "max" halftone cell feel from current behavior; intensity now
       // controls dot-size spread inside this cell instead of blending with source.
       const cell = Math.max(2, Math.round(6 * patternScale));
+      const cellMid = Math.floor(cell * 0.5);
+      const cellHalf = 0.5 * cell;
       const edge = 0.6 / Math.max(1, cell);
       const paperR = 245;
       const paperG = 242;
       const paperB = 230;
+      const parseHexColor = (hex, fallback) => {
+        const value = typeof hex === 'string' ? hex.trim() : '';
+        if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+          return [
+            parseInt(value.slice(1, 3), 16),
+            parseInt(value.slice(3, 5), 16),
+            parseInt(value.slice(5, 7), 16),
+          ];
+        }
+        return fallback;
+      };
+      const [monoFgR, monoFgG, monoFgB] = parseHexColor(params.fgColor, [35, 24, 21]);
+      const [monoBgR, monoBgG, monoBgB] = parseHexColor(params.bgColor, [paperR, paperG, paperB]);
       const tau = Math.PI / 180;
       const aC = 15 * tau;
       const aM = 75 * tau;
@@ -594,72 +609,331 @@ const FILTERS = {
         const u = Math.max(0, Math.min(1, (x - v0) / (v1 - v0)));
         return u * u * (3 - 2 * u);
       };
-      const dotMask = (x, y, amount, cosA, sinA, jitter) => {
-        const xr = x * cosA - y * sinA;
-        const yr = x * sinA + y * cosA;
-        const fx = (modCell(xr + 0.5 * cell) / cell) - 0.5;
-        const fy = (modCell(yr + 0.5 * cell) / cell) - 0.5;
-        const dist = Math.sqrt(fx * fx + fy * fy);
-        const tone = Math.max(0, Math.min(1, amount));
-        const toneMapped = Math.pow(toneFloor + (1 - toneFloor) * tone, gamma);
-        const radius = Math.max(0, minRadius + (maxRadius - minRadius) * toneMapped + jitter * jitterAmp);
-        const edgeLo = radius - edge;
-        const edgeHi = radius + edge;
-        return 1 - smooth(edgeLo, edgeHi, dist);
-      };
       const bayer4 = [
         [0,  8,  2, 10],
         [12, 4, 14, 6],
         [3, 11, 1,  9],
         [15, 7, 13, 5],
       ];
-
+      const localScratch = scratch || getFilterScratch('dithering', data.length);
+      const ensureScratch = (key, len, Type = Float32Array) => {
+        if (!localScratch[key] || localScratch[key].length !== len) {
+          localScratch[key] = new Type(len);
+        }
+        return localScratch[key];
+      };
+      const gw = Math.max(1, Math.ceil(w / cell));
+      const gh = Math.max(1, Math.ceil(h / cell));
+      const gridSize = gw * gh;
+      const gridC = ensureScratch('gridC', gridSize);
+      const gridM = ensureScratch('gridM', gridSize);
+      const gridY = ensureScratch('gridY', gridSize);
+      const gridK = ensureScratch('gridK', gridSize);
+      const gridOutC = ensureScratch('gridOutC', gridSize);
+      const gridOutM = ensureScratch('gridOutM', gridSize);
+      const gridOutY = ensureScratch('gridOutY', gridSize);
+      const gridOutK = ensureScratch('gridOutK', gridSize);
+      const cellAmtC = ensureScratch('cellAmtC', gridSize);
+      const cellAmtM = ensureScratch('cellAmtM', gridSize);
+      const cellAmtY = ensureScratch('cellAmtY', gridSize);
+      const cellAmtK = ensureScratch('cellAmtK', gridSize);
+      const cellToneC = ensureScratch('cellToneC', gridSize);
+      const cellToneM = ensureScratch('cellToneM', gridSize);
+      const cellToneY = ensureScratch('cellToneY', gridSize);
+      const cellToneK = ensureScratch('cellToneK', gridSize);
+      const cellSat = ensureScratch('cellSat', gridSize);
+      const cellBleed = ensureScratch('cellBleed', gridSize);
+      const cellWell = ensureScratch('cellWell', gridSize);
+      const cellChromaWell = ensureScratch('cellChromaWell', gridSize);
+      const cellDeepBoost = ensureScratch('cellDeepBoost', gridSize);
+      const cellHardWell = ensureScratch('cellHardWell', gridSize);
+      const cellKMergeScale = ensureScratch('cellKMergeScale', gridSize);
+      const cellKWellScale = ensureScratch('cellKWellScale', gridSize);
+      const xCell = ensureScratch('ditherXCell', w, Uint32Array);
+      const xCellNext = ensureScratch('ditherXCellNext', w, Uint32Array);
+      const xCellLerp = ensureScratch('ditherXCellLerp', w);
+      const xBayer = ensureScratch('ditherXBayer', w, Uint8Array);
+      const rowCellBase = ensureScratch('ditherRowCellBase', h, Uint32Array);
+      const rowCellBaseNext = ensureScratch('ditherRowCellBaseNext', h, Uint32Array);
+      const yCellLerp = ensureScratch('ditherYCellLerp', h);
+      const yBayer = ensureScratch('ditherYBayer', h, Uint8Array);
+      const xCCos = ensureScratch('ditherXCCos', w);
+      const xCSin = ensureScratch('ditherXCSin', w);
+      const xMCos = ensureScratch('ditherXMCos', w);
+      const xMSin = ensureScratch('ditherXMSin', w);
+      const xYCos = ensureScratch('ditherXYCos', w);
+      const xYSin = ensureScratch('ditherXYSin', w);
+      const xKCos = ensureScratch('ditherXKCos', w);
+      const xKSin = ensureScratch('ditherXKSin', w);
+      const xBleedA = ensureScratch('ditherXBleedA', w);
+      const xBleedB = ensureScratch('ditherXBleedB', w);
+      const bleedDenA = Math.max(1, cell * 0.78);
+      const bleedDenB = Math.max(1, cell * 0.92);
+      for (let x = 0; x < w; x++) {
+        const gx0 = Math.min(gw - 1, Math.floor(x / cell));
+        xCell[x] = gx0;
+        xCellNext[x] = Math.min(gw - 1, gx0 + 1);
+        xCellLerp[x] = Math.min(1, Math.max(0, ((x + 0.5) - gx0 * cell) / Math.max(1, cell)));
+        xBayer[x] = (Math.floor(x / patternScale)) & 3;
+        xCCos[x] = x * cCos;
+        xCSin[x] = x * cSin;
+        xMCos[x] = x * mCos;
+        xMSin[x] = x * mSin;
+        xYCos[x] = x * yCos;
+        xYSin[x] = x * ySin;
+        xKCos[x] = x * kCos;
+        xKSin[x] = x * kSin;
+        xBleedA[x] = (x * 0.81) / bleedDenA;
+        xBleedB[x] = (x * 1.09) / bleedDenB;
+      }
       for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = (y * w + x) * 4;
-          const sr = data[i];
-          const sg = data[i + 1];
-          const sb = data[i + 2];
+        const gy0 = Math.min(gh - 1, Math.floor(y / cell));
+        rowCellBase[y] = gy0 * gw;
+        rowCellBaseNext[y] = Math.min(gh - 1, gy0 + 1) * gw;
+        yCellLerp[y] = Math.min(1, Math.max(0, ((y + 0.5) - gy0 * cell) / Math.max(1, cell)));
+        yBayer[y] = (Math.floor(y / patternScale)) & 3;
+      }
+      for (let gy = 0; gy < gh; gy++) {
+        const sy = Math.min(h - 1, gy * cell + cellMid);
+        for (let gx = 0; gx < gw; gx++) {
+          const sx = Math.min(w - 1, gx * cell + cellMid);
+          const srcIdx = (sy * w + sx) * 4;
+          const sr = data[srcIdx] / 255;
+          const sg = data[srcIdx + 1] / 255;
+          const sb = data[srcIdx + 2] / 255;
+          const lm = 0.299 * sr + 0.587 * sg + 0.114 * sb;
+          const darkness = 1 - lm;
+          const c0 = 1 - sr;
+          const m0 = 1 - sg;
+          const y0 = 1 - sb;
+          const k0 = Math.min(c0, m0, y0) * (0.58 + 0.35 * darkness);
+          const gi = gy * gw + gx;
+          gridC[gi] = Math.max(0, c0 - k0 * 0.78);
+          gridM[gi] = Math.max(0, m0 - k0 * 0.78);
+          gridY[gi] = Math.max(0, y0 - k0 * 0.78);
+          gridK[gi] = k0;
+          gridOutC[gi] = 0;
+          gridOutM[gi] = 0;
+          gridOutY[gi] = 0;
+          gridOutK[gi] = 0;
+        }
+      }
+      const diffuseAtkinsonGrid = (channel, out, thresholdBase, darkBoost = 0) => {
+        for (let gy = 0; gy < gh; gy++) {
+          for (let gx = 0; gx < gw; gx++) {
+            const gi = gy * gw + gx;
+            const oldVal = channel[gi];
+            const threshold = thresholdBase - oldVal * darkBoost;
+            const next = oldVal >= threshold ? 1 : 0;
+            out[gi] = next;
+            const err = (oldVal - next) / 8;
+            if (err === 0) continue;
+            if (gx + 1 < gw) channel[gi + 1] += err;
+            if (gx + 2 < gw) channel[gi + 2] += err;
+            if (gy + 1 < gh) {
+              const row1 = gi + gw;
+              if (gx > 0) channel[row1 - 1] += err;
+              channel[row1] += err;
+              if (gx + 1 < gw) channel[row1 + 1] += err;
+            }
+            if (gy + 2 < gh) {
+              channel[gi + 2 * gw] += err;
+            }
+          }
+        }
+      };
+      const diffusionMix = 0.12 + 0.38 * curveT;
+      diffuseAtkinsonGrid(gridC, gridOutC, 0.56 - 0.05 * curveT, 0.02);
+      diffuseAtkinsonGrid(gridM, gridOutM, 0.55 - 0.05 * curveT, 0.02);
+      diffuseAtkinsonGrid(gridY, gridOutY, 0.58 - 0.04 * curveT, 0.015);
+      diffuseAtkinsonGrid(gridK, gridOutK, 0.50 - 0.07 * curveT, 0.03);
+      const radiusScale = maxRadius - minRadius;
+      const dotCovFromRot = (xr, yr, baseTone, jitterValue) => {
+        const fx = (modCell(xr + cellHalf) / cell) - 0.5;
+        const fy = (modCell(yr + cellHalf) / cell) - 0.5;
+        const dist = Math.sqrt(fx * fx + fy * fy);
+        const radius = Math.max(0, minRadius + radiusScale * baseTone + jitterValue * jitterAmp);
+        const edgeLo = radius - edge;
+        const edgeHi = radius + edge;
+        return 1 - smooth(edgeLo, edgeHi, dist);
+      };
+      const bilerpCell = (arr, i00, i10, i01, i11, tx, ty) => {
+        const top = arr[i00] + (arr[i10] - arr[i00]) * tx;
+        const bottom = arr[i01] + (arr[i11] - arr[i01]) * tx;
+        return top + (bottom - top) * ty;
+      };
+      for (let gy = 0; gy < gh; gy++) {
+        const sy = Math.min(h - 1, gy * cell + cellMid);
+        for (let gx = 0; gx < gw; gx++) {
+          const sx = Math.min(w - 1, gx * cell + cellMid);
+          const srcIdx = (sy * w + sx) * 4;
+          const sr = data[srcIdx];
+          const sg = data[srcIdx + 1];
+          const sb = data[srcIdx + 2];
           const lm = (0.299 * sr + 0.587 * sg + 0.114 * sb) / 255;
           const darkness = 1 - lm;
-          const threshold = (bayer4[(Math.floor(y / patternScale)) & 3][(Math.floor(x / patternScale)) & 3] / 15) - 0.5;
-          const jitter = threshold * 0.045;
-
-          // Simple CMYK-ish separation: color always comes from halftone layers.
+          const srcSat = (Math.max(sr, sg, sb) - Math.min(sr, sg, sb)) / 255;
           const c0 = 1 - sr / 255;
           const m0 = 1 - sg / 255;
           const y0 = 1 - sb / 255;
-          const k0 = Math.min(c0, m0, y0) * (0.58 + 0.35 * darkness);
-          const cAmt = Math.max(0, c0 - k0 * 0.78);
-          const mAmt = Math.max(0, m0 - k0 * 0.78);
-          const yAmt = Math.max(0, y0 - k0 * 0.78);
+          const kRichness = 1 - Math.min(0.7, srcSat * (0.32 + 0.18 * curveT));
+          const k0 = Math.min(c0, m0, y0) * (0.58 + 0.35 * darkness) * kRichness;
+          let cAmt = Math.max(0, c0 - k0 * 0.78);
+          let mAmt = Math.max(0, m0 - k0 * 0.78);
+          let yAmt = Math.max(0, y0 - k0 * 0.78);
+          let kAmt = k0;
+          const gi = gy * gw + gx;
+          const mixCoverage = (base, out, boost = 1) => {
+            const lifted = base + (1 - base) * out * diffusionMix * boost;
+            const carved = base * (1 - (1 - out) * diffusionMix * 0.28);
+            return Math.max(0, Math.min(1, out >= 0.5 ? lifted : carved));
+          };
+          cAmt = mixCoverage(cAmt, gridOutC[gi], 0.70);
+          mAmt = mixCoverage(mAmt, gridOutM[gi], 0.72);
+          yAmt = mixCoverage(yAmt, gridOutY[gi], 0.60);
+          kAmt = mixCoverage(kAmt, gridOutK[gi], 0.92);
+          cellAmtC[gi] = cAmt;
+          cellAmtM[gi] = mAmt;
+          cellAmtY[gi] = yAmt;
+          cellAmtK[gi] = kAmt;
+          cellToneC[gi] = Math.pow(toneFloor + (1 - toneFloor) * cAmt, gamma);
+          cellToneM[gi] = Math.pow(toneFloor + (1 - toneFloor) * mAmt, gamma);
+          cellToneY[gi] = Math.pow(toneFloor + (1 - toneFloor) * yAmt, gamma);
+          cellToneK[gi] = Math.pow(toneFloor + (1 - toneFloor) * kAmt, gamma);
+          const bleedBase = smooth(0.72 - 0.10 * curveT, 0.90 - 0.04 * curveT, darkness) * (0.22 + 0.78 * curveT);
+          const wellBase = smooth(0.84 - 0.08 * curveT, 0.985 - 0.02 * curveT, darkness) * Math.pow(curveT, 0.9);
+          cellSat[gi] = srcSat;
+          cellBleed[gi] = bleedBase;
+          cellWell[gi] = wellBase;
+          cellChromaWell[gi] = wellBase * srcSat;
+          cellDeepBoost[gi] = Math.max(0, (darkness - (0.88 - 0.06 * curveT)) / Math.max(0.02, 0.12 - 0.04 * curveT));
+          cellHardWell[gi] = Math.max(0, (darkness - (0.955 - 0.03 * curveT)) / Math.max(0.008, 0.035 - 0.015 * curveT));
+          cellKMergeScale[gi] = 1.45 * (1 - 0.45 * srcSat);
+          cellKWellScale[gi] = 1.20 * (1 - 0.55 * srcSat);
+        }
+      }
 
-          const covC = dotMask(x, y, cAmt, cCos, cSin, jitter);
-          const covM = dotMask(x, y, mAmt, mCos, mSin, -jitter * 0.85);
-          const covY = dotMask(x, y, yAmt, yCos, ySin, jitter * 0.65);
-          const covK = dotMask(x, y, k0, kCos, kSin, -jitter * 0.4);
+      for (let y = 0; y < h; y++) {
+        const yBase = rowCellBase[y];
+        const yBaseNext = rowCellBaseNext[y];
+        const ty = yCellLerp[y];
+        const yThresholdRow = bayer4[yBayer[y]];
+        const cXOff = -y * cSin;
+        const cYOff = y * cCos;
+        const mXOff = -y * mSin;
+        const mYOff = y * mCos;
+        const yXOff = -y * ySin;
+        const yYOff = y * yCos;
+        const kXOff = -y * kSin;
+        const kYOff = y * kCos;
+        const bleedAY = (y * 1.17) / bleedDenA;
+        const bleedBY = (-y * 0.73) / bleedDenB;
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const gx0 = xCell[x];
+          const gx1 = xCellNext[x];
+          const tx = xCellLerp[x];
+          const gi00 = yBase + gx0;
+          const gi10 = yBase + gx1;
+          const gi01 = yBaseNext + gx0;
+          const gi11 = yBaseNext + gx1;
+          const threshold = (yThresholdRow[xBayer[x]] / 15) - 0.5;
+          const jitter = threshold * 0.045;
+          const cAmt = bilerpCell(cellAmtC, gi00, gi10, gi01, gi11, tx, ty);
+          const mAmt = bilerpCell(cellAmtM, gi00, gi10, gi01, gi11, tx, ty);
+          const yAmt = bilerpCell(cellAmtY, gi00, gi10, gi01, gi11, tx, ty);
+          const kAmt = bilerpCell(cellAmtK, gi00, gi10, gi01, gi11, tx, ty);
+          const srcSat = bilerpCell(cellSat, gi00, gi10, gi01, gi11, tx, ty);
+          const bleedBase = bilerpCell(cellBleed, gi00, gi10, gi01, gi11, tx, ty);
+          const wellBase = bilerpCell(cellWell, gi00, gi10, gi01, gi11, tx, ty);
+          const chromaWellT = bilerpCell(cellChromaWell, gi00, gi10, gi01, gi11, tx, ty);
+          const toneC = bilerpCell(cellToneC, gi00, gi10, gi01, gi11, tx, ty);
+          const toneM = bilerpCell(cellToneM, gi00, gi10, gi01, gi11, tx, ty);
+          const toneY = bilerpCell(cellToneY, gi00, gi10, gi01, gi11, tx, ty);
+          const toneK = bilerpCell(cellToneK, gi00, gi10, gi01, gi11, tx, ty);
+          const covC = dotCovFromRot(xCCos[x] + cXOff, xCSin[x] + cYOff, toneC, jitter);
+          const covM = dotCovFromRot(xMCos[x] + mXOff, xMSin[x] + mYOff, toneM, -jitter * 0.85);
+          const covY = dotCovFromRot(xYCos[x] + yXOff, xYSin[x] + yYOff, toneY, jitter * 0.65);
+          const covK = dotCovFromRot(xKCos[x] + kXOff, xKSin[x] + kYOff, toneK, -jitter * 0.4);
 
-          // Subtractive paper/ink approximation.
-          const hr = paperR
-            * (1 - 0.88 * covC)
-            * (1 - 0.12 * covM)
-            * (1 - 0.06 * covY)
-            * (1 - 0.72 * covK);
-          const hg = paperG
-            * (1 - 0.08 * covC)
-            * (1 - 0.86 * covM)
-            * (1 - 0.08 * covY)
-            * (1 - 0.72 * covK);
-          const hb = paperB
-            * (1 - 0.06 * covC)
-            * (1 - 0.12 * covM)
-            * (1 - 0.88 * covY)
-            * (1 - 0.72 * covK);
+          const bleedFieldA = Math.sin(xBleedA[x] + bleedAY + threshold * 9.7) * 0.5 + 0.5;
+          const bleedFieldB = Math.sin(xBleedB[x] + bleedBY - threshold * 7.1) * 0.5 + 0.5;
+          const mergeCoverage = (cov, amt, field, strengthMul = 1) => {
+            const bleedT = bleedBase * strengthMul * (0.55 + 0.45 * field);
+            if (bleedT <= 0.0001) return cov;
+            const seed = cov + amt * (0.22 + 0.58 * bleedT) + (field - 0.5) * (0.08 + 0.06 * bleedT);
+            const merged = smooth(0.52 - 0.22 * bleedT, 0.96 - 0.08 * bleedT, seed);
+            return Math.max(cov, merged * bleedT);
+          };
+          const forceWell = (cov, amt, field, amountMul = 1) => {
+            if (wellBase <= 0.0001) return cov;
+            const fieldMix = 0.45 + 0.55 * field;
+            const seed = cov + amt * amountMul + fieldMix * 0.18;
+            const well = smooth(0.58 - 0.18 * wellBase, 0.92 - 0.16 * wellBase, seed);
+            return Math.max(cov, well * wellBase);
+          };
+          let inkCovC = mergeCoverage(covC, cAmt, bleedFieldA, 0.85);
+          let inkCovM = mergeCoverage(covM, mAmt, bleedFieldB, 0.90);
+          let inkCovY = mergeCoverage(covY, yAmt, 1 - bleedFieldA, 0.70);
+          let inkCovK = mergeCoverage(
+            covK,
+            kAmt,
+            bleedFieldA * 0.65 + bleedFieldB * 0.35,
+            bilerpCell(cellKMergeScale, gi00, gi10, gi01, gi11, tx, ty)
+          );
+          inkCovC = forceWell(inkCovC, cAmt, bleedFieldA, 0.55);
+          inkCovM = forceWell(inkCovM, mAmt, bleedFieldB, 0.60);
+          inkCovY = forceWell(inkCovY, yAmt, 1 - bleedFieldA, 0.40);
+          inkCovK = forceWell(
+            inkCovK,
+            kAmt,
+            bleedFieldA * 0.65 + bleedFieldB * 0.35,
+            bilerpCell(cellKWellScale, gi00, gi10, gi01, gi11, tx, ty)
+          );
+          if (chromaWellT > 0.0001) {
+            const richC = Math.min(1, cAmt + chromaWellT * (0.35 + 0.45 * cAmt));
+            const richM = Math.min(1, mAmt + chromaWellT * (0.35 + 0.45 * mAmt));
+            const richY = Math.min(1, yAmt + chromaWellT * (0.35 + 0.45 * yAmt));
+            inkCovC = Math.max(inkCovC, richC * (0.40 + 0.60 * chromaWellT));
+            inkCovM = Math.max(inkCovM, richM * (0.40 + 0.60 * chromaWellT));
+            inkCovY = Math.max(inkCovY, richY * (0.40 + 0.60 * chromaWellT));
+          }
+          const deepShadowBoost = bilerpCell(cellDeepBoost, gi00, gi10, gi01, gi11, tx, ty);
+          inkCovK = Math.max(inkCovK, Math.min(1, deepShadowBoost * (0.82 + 0.18 * (0.5 + 0.5 * bleedFieldA)) * (1 - 0.55 * srcSat)));
+          const hardWellT = bilerpCell(cellHardWell, gi00, gi10, gi01, gi11, tx, ty);
+          if (hardWellT > 0) {
+            inkCovK = Math.max(inkCovK, Math.min(1, hardWellT * (1 - 0.65 * srcSat)));
+            const colorHardWell = hardWellT * srcSat;
+            if (colorHardWell > 0.0001) {
+              inkCovC = Math.max(inkCovC, Math.min(1, cAmt + colorHardWell * 0.90));
+              inkCovM = Math.max(inkCovM, Math.min(1, mAmt + colorHardWell * 0.95));
+              inkCovY = Math.max(inkCovY, Math.min(1, yAmt + colorHardWell * 0.95));
+            }
+          }
+          const inkR = paperR
+            * (1 - 0.88 * inkCovC)
+            * (1 - 0.12 * inkCovM)
+            * (1 - 0.06 * inkCovY)
+            * (1 - 0.88 * inkCovK);
+          const inkG = paperG
+            * (1 - 0.08 * inkCovC)
+            * (1 - 0.86 * inkCovM)
+            * (1 - 0.08 * inkCovY)
+            * (1 - 0.88 * inkCovK);
+          const inkB = paperB
+            * (1 - 0.06 * inkCovC)
+            * (1 - 0.12 * inkCovM)
+            * (1 - 0.88 * inkCovY)
+            * (1 - 0.88 * inkCovK);
 
-          const hLm = 0.299 * hr + 0.587 * hg + 0.114 * hb;
-          data[i] = clamp255(hr * (1 - monoT) + hLm * monoT);
-          data[i + 1] = clamp255(hg * (1 - monoT) + hLm * monoT);
-          data[i + 2] = clamp255(hb * (1 - monoT) + hLm * monoT);
+          const hLm = 0.299 * inkR + 0.587 * inkG + 0.114 * inkB;
+          const inkMix = 1 - (hLm / 255);
+          const monoR = monoBgR * (1 - inkMix) + monoFgR * inkMix;
+          const monoG = monoBgG * (1 - inkMix) + monoFgG * inkMix;
+          const monoB = monoBgB * (1 - inkMix) + monoFgB * inkMix;
+          data[i] = clamp255(inkR * (1 - monoT) + monoR * monoT);
+          data[i + 1] = clamp255(inkG * (1 - monoT) + monoG * monoT);
+          data[i + 2] = clamp255(inkB * (1 - monoT) + monoB * monoT);
         }
       }
     },
@@ -1224,7 +1498,7 @@ const FILTERS = {
 const FILTER_PARAM_DEFAULTS = {
   film:        { grain: 10 },
   redshift:    {},
-  dithering:   { mono: 0 },
+  dithering:   { mono: 0, fgColor: '#231815', bgColor: '#f5f2e6' },
   pixelArt:    { bits: 5 },
   swirl:       {},
   vaporwave:   { scanlines: 60, scanlineSize: 2, chroma: 20 },
@@ -3827,6 +4101,8 @@ const filterHyperpopControls = document.getElementById('filter-hyperpop-controls
 const filterPixelArtControls = document.getElementById('filter-pixelart-controls');
 const ctrlGrain            = document.getElementById('ctrl-grain');
 const ctrlDitherMono       = document.getElementById('ctrl-dither-mono');
+const ctrlDitherFg         = document.getElementById('ctrl-dither-fg');
+const ctrlDitherBg         = document.getElementById('ctrl-dither-bg');
 const ctrlScanlines        = document.getElementById('ctrl-scanlines');
 const ctrlScanlineSize     = document.getElementById('ctrl-scanline-size');
 const ctrlChroma           = document.getElementById('ctrl-chroma');
@@ -4873,6 +5149,8 @@ function hideLegacyFilterOverlays() {
 const PREVIEW_INTERACTION_FPS = 60;
 const PREVIEW_INTERACTIVE_SCALE = 0.72;
 const PREVIEW_INTERACTIVE_MAX_PIXELS = 900000;
+const PREVIEW_INTERACTIVE_SCALE_HEAVY = 0.54;
+const PREVIEW_INTERACTIVE_MAX_PIXELS_HEAVY = 430000;
 const PREVIEW_INTERACTION_WINDOW_MS = 160;
 const SETTLE_MODE_MIN_SAMPLES = 16;
 const SETTLE_MODE_TOTAL_MS_HIGH = 26;
@@ -4886,6 +5164,8 @@ let _previewRenderInFlight = false;
 let _previewRenderPending = false;
 let _previewThrottleTimer = 0;
 let _lastPreviewRenderTs = 0;
+const INTERACTIVE_HEAVY_FILTERS = new Set(['dithering']);
+const INTERACTIVE_WORKER_FILTERS = new Set(['dithering']);
 
 function computePreviewTargetSize(quality = 'settle') {
   const renderedW = Math.max(1, baseImage.offsetWidth || 1);
@@ -4897,11 +5177,13 @@ function computePreviewTargetSize(quality = 'settle') {
     };
   }
 
-  let targetW = renderedW * PREVIEW_INTERACTIVE_SCALE;
-  let targetH = renderedH * PREVIEW_INTERACTIVE_SCALE;
+  const isHeavy = INTERACTIVE_HEAVY_FILTERS.has(state.filter.name);
+  let targetW = renderedW * (isHeavy ? PREVIEW_INTERACTIVE_SCALE_HEAVY : PREVIEW_INTERACTIVE_SCALE);
+  let targetH = renderedH * (isHeavy ? PREVIEW_INTERACTIVE_SCALE_HEAVY : PREVIEW_INTERACTIVE_SCALE);
+  const maxPixels = isHeavy ? PREVIEW_INTERACTIVE_MAX_PIXELS_HEAVY : PREVIEW_INTERACTIVE_MAX_PIXELS;
   const area = targetW * targetH;
-  if (area > PREVIEW_INTERACTIVE_MAX_PIXELS) {
-    const downscale = Math.sqrt(PREVIEW_INTERACTIVE_MAX_PIXELS / area);
+  if (area > maxPixels) {
+    const downscale = Math.sqrt(maxPixels / area);
     targetW *= downscale;
     targetH *= downscale;
   }
@@ -5040,7 +5322,9 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const filterStartTs = performance.now();
   const settleExecMode = quality === 'settle' ? pickSettleExecMode() : 'main';
   perf.settleExecMode = settleExecMode;
-  const preferMainThread = quality === 'interactive' || settleExecMode === 'main';
+  const preferMainThread =
+    (quality === 'interactive' && !INTERACTIVE_WORKER_FILTERS.has(name)) ||
+    settleExecMode === 'main';
   const filterResult = await runFilterInWorker(
     name,
     previewData,
@@ -5292,6 +5576,8 @@ filterChips.forEach(chip => {
       ctrlGrain.value = state.filter.params.grain;
     } else if (state.filter.name === 'dithering') {
       ctrlDitherMono.value = state.filter.params.mono ?? 0;
+      ctrlDitherFg.value = state.filter.params.fgColor ?? '#231815';
+      ctrlDitherBg.value = state.filter.params.bgColor ?? '#f5f2e6';
     } else if (state.filter.name === 'vaporwave') {
       ctrlScanlines.value    = state.filter.params.scanlines;
       ctrlScanlineSize.value = state.filter.params.scanlineSize;
@@ -5333,6 +5619,16 @@ ctrlGrain.addEventListener('input', () => {
 
 ctrlDitherMono.addEventListener('input', () => {
   state.filter.params.mono = parseInt(ctrlDitherMono.value);
+  scheduleImageFilterRender({ interactive: true });
+});
+
+ctrlDitherFg.addEventListener('input', () => {
+  state.filter.params.fgColor = ctrlDitherFg.value;
+  scheduleImageFilterRender({ interactive: true });
+});
+
+ctrlDitherBg.addEventListener('input', () => {
+  state.filter.params.bgColor = ctrlDitherBg.value;
   scheduleImageFilterRender({ interactive: true });
 });
 
@@ -5395,6 +5691,8 @@ ctrlPixelBits.addEventListener('input', () => {
   ctrlFilterIntensity,
   ctrlGrain,
   ctrlDitherMono,
+  ctrlDitherFg,
+  ctrlDitherBg,
   ctrlScanlines,
   ctrlScanlineSize,
   ctrlChroma,
