@@ -1702,6 +1702,11 @@ function defaultStyle() {
     : { ...PRESETS.classic, blur: 0, glow: 0, opacity: 1, bgColor: null };
 }
 
+function confirmReplaceCanvasAndPickFile() {
+  if (!confirm('Start over? Your work will be lost, like tears in the rain.')) return;
+  fileInput?.click();
+}
+
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
 const uploadScreen   = document.getElementById('upload-screen');
@@ -6492,7 +6497,7 @@ window.addEventListener('keydown', async (e) => {
       _backKeyTimer = 0;
     }
     e.preventDefault();
-    backBtn?.click();
+    confirmReplaceCanvasAndPickFile();
     return;
   }
 
