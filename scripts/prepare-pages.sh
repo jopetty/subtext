@@ -27,6 +27,7 @@ copy_dir() {
 
 # Core site entrypoints/assets.
 copy_file "index.html"
+copy_file "404.html"
 copy_file "app.js"
 copy_file "style.css"
 copy_file "sw.js"

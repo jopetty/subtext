@@ -8,4 +8,4 @@ IP=$(ipconfig getifaddr en0)
 npm run rev:assets >/dev/null
 
 echo "Serving Subtext at http://$IP:$PORT"
-python3 -m http.server $PORT
+python3 scripts/spa_http_server.py $PORT

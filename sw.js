@@ -1,12 +1,12 @@
 'use strict';
 
-const CACHE_VERSION = 'subtext-vb0bdfc8ddf';
+const CACHE_VERSION = 'subtext-v29bacd3411';
 const CORE_ASSETS = [
   '/',
   '/index.html',
-  '/style.css?v=b0bdfc8ddf',
-  '/app.js?v=b0bdfc8ddf',
-  '/manifest.webmanifest?v=b0bdfc8ddf',
+  '/style.css?v=29bacd3411',
+  '/app.js?v=29bacd3411',
+  '/manifest.webmanifest?v=29bacd3411',
   '/favicon-16.png',
   '/favicon-32.png',
   '/apple-touch-icon.png',

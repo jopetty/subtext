@@ -45,3 +45,9 @@ test('double-s keyboard shortcut triggers save download', async ({ page }) => {
 
   expect(download.suggestedFilename().toLowerCase()).toMatch(/^subtext.*\.jpg$/);
 });
+
+test('deep links fall back to the app shell', async ({ page }) => {
+  await page.goto('/fdsa');
+  await expect(page.locator('#upload-screen')).toHaveClass(/active/);
+  await expect(page.locator('.wordmark')).toContainText('Subtext');
+});
