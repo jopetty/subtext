@@ -12,6 +12,7 @@ const state = {
   imageNaturalW: 0,
   imageNaturalH: 0,
   imageObjectUrl: null,
+  sourceImageBlob: null,
   uploadBusy: false,
   objects: [],           // array of canvas object instances (TextObject, SpriteObject, ...)
   selectedObject: null,  // currently selected object or null
@@ -27,6 +28,19 @@ const state = {
     hasStrokes: false,
   },
 };
+
+const DRAFT_DB_NAME = 'subtext-drafts';
+const DRAFT_DB_VERSION = 1;
+const DRAFT_STORE_NAME = 'drafts';
+const DRAFT_KEY = 'latest';
+const DRAFT_SAVE_DEBOUNCE_MS = 450;
+const DRAFT_SCHEMA_VERSION = 1;
+
+let _draftDbPromise = null;
+let _draftSaveTimer = 0;
+let _draftSaveQueued = false;
+let _draftSaveInFlight = false;
+let _draftRestoreInProgress = false;
 
 const PERF_MAX_SAMPLES = 200;
 const perf = {
@@ -1793,6 +1807,311 @@ if (baseImage) {
   baseImage.addEventListener('dragstart', (e) => e.preventDefault());
 }
 
+function openDraftDb() {
+  if (!('indexedDB' in window)) return Promise.resolve(null);
+  if (_draftDbPromise) return _draftDbPromise;
+  _draftDbPromise = new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(DRAFT_DB_NAME, DRAFT_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(DRAFT_STORE_NAME)) {
+          db.createObjectStore(DRAFT_STORE_NAME);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return _draftDbPromise;
+}
+
+async function readDraftRecord() {
+  const db = await openDraftDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(DRAFT_STORE_NAME, 'readonly');
+      const store = tx.objectStore(DRAFT_STORE_NAME);
+      const req = store.get(DRAFT_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function writeDraftRecord(record) {
+  const db = await openDraftDb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(DRAFT_STORE_NAME, 'readwrite');
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.objectStore(DRAFT_STORE_NAME).put(record, DRAFT_KEY);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function clearDraftRecord() {
+  const db = await openDraftDb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(DRAFT_STORE_NAME, 'readwrite');
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.objectStore(DRAFT_STORE_NAME).delete(DRAFT_KEY);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+function canvasToBlob(canvas, type = 'image/png', quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob || null), type, quality);
+  });
+}
+
+async function serializePaintLayerBlob() {
+  if (!paintLayer || !state.paint.hasStrokes || paintLayer.width <= 0 || paintLayer.height <= 0) {
+    return null;
+  }
+  return await canvasToBlob(paintLayer, 'image/png');
+}
+
+async function serializeDraftObject(obj) {
+  if (!obj) return null;
+  if (obj.type === 'text') {
+    return {
+      type: 'text',
+      xPct: obj.xPct,
+      yPct: obj.yPct,
+      style: { ...obj.style },
+      text: obj.text || '',
+      activePreset: obj.activePreset ?? null,
+      autoContrastStep: obj.autoContrastStep ?? 0,
+    };
+  }
+  if (obj.type === 'image') {
+    const blob = obj.sourceBlob || null;
+    if (!blob) return null;
+    return {
+      type: 'image',
+      xPct: obj.xPct,
+      yPct: obj.yPct,
+      aspect: obj.aspect,
+      isVector: !!obj.isVector,
+      style: { ...obj.style },
+      blob,
+    };
+  }
+  return null;
+}
+
+async function serializeDraftSession() {
+  if (!state.imageLoaded || !state.sourceImageBlob) return null;
+  const objects = [];
+  for (const obj of state.objects) {
+    const serialized = await serializeDraftObject(obj);
+    if (serialized) objects.push(serialized);
+  }
+  return {
+    schemaVersion: DRAFT_SCHEMA_VERSION,
+    savedAt: Date.now(),
+    imageBlob: state.sourceImageBlob,
+    filter: {
+      name: state.filter.name,
+      intensity: state.filter.intensity,
+      params: { ...state.filter.params },
+      applyOnTop: !!state.filter.applyOnTop,
+    },
+    objects,
+    paint: {
+      color: state.paint.color,
+      size: state.paint.size,
+      hasStrokes: !!state.paint.hasStrokes,
+      blob: await serializePaintLayerBlob(),
+    },
+    lastStyle: state.lastStyle ? { ...state.lastStyle } : null,
+    lastPreset: state.lastPreset ?? null,
+  };
+}
+
+async function flushDraftSave() {
+  if (_draftRestoreInProgress || _draftSaveInFlight || !_draftSaveQueued) return;
+  _draftSaveQueued = false;
+  _draftSaveInFlight = true;
+  try {
+    const draft = await serializeDraftSession();
+    if (draft) {
+      await writeDraftRecord(draft);
+    }
+  } catch {}
+  _draftSaveInFlight = false;
+  if (_draftSaveQueued) {
+    void flushDraftSave();
+  }
+}
+
+function scheduleDraftSave(opts = {}) {
+  const { immediate = false } = opts;
+  if (_draftRestoreInProgress || !state.imageLoaded || !state.sourceImageBlob) return;
+  _draftSaveQueued = true;
+  if (_draftSaveTimer) {
+    clearTimeout(_draftSaveTimer);
+    _draftSaveTimer = 0;
+  }
+  if (immediate) {
+    void flushDraftSave();
+    return;
+  }
+  _draftSaveTimer = setTimeout(() => {
+    _draftSaveTimer = 0;
+    void flushDraftSave();
+  }, DRAFT_SAVE_DEBOUNCE_MS);
+}
+
+async function discardDraftSession() {
+  _draftSaveQueued = false;
+  if (_draftSaveTimer) {
+    clearTimeout(_draftSaveTimer);
+    _draftSaveTimer = 0;
+  }
+  while (_draftSaveInFlight) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  await clearDraftRecord();
+}
+
+function syncFilterControlsFromState() {
+  filterChips.forEach((chip) => {
+    chip.classList.toggle('active', chip.dataset.filter === state.filter.name);
+  });
+  ctrlFilterIntensity.value = String(state.filter.intensity ?? 75);
+  ctrlFilterOnTop.checked = !!state.filter.applyOnTop;
+  const params = state.filter.params || {};
+  if (ctrlGrain) ctrlGrain.value = String(params.grain ?? 10);
+  if (ctrlDitherMono) ctrlDitherMono.value = String(params.mono ?? 0);
+  if (ctrlDitherFg) ctrlDitherFg.value = params.fgColor ?? '#231815';
+  if (ctrlDitherBg) ctrlDitherBg.value = params.bgColor ?? '#f5f2e6';
+  if (ctrlScanlines) ctrlScanlines.value = String(params.scanlines ?? 60);
+  if (ctrlScanlineSize) ctrlScanlineSize.value = String(params.scanlineSize ?? 2);
+  if (ctrlChroma) ctrlChroma.value = String(params.chroma ?? 20);
+  if (ctrlDaGrain) ctrlDaGrain.value = String(params.grain ?? 45);
+  if (ctrlVignette) ctrlVignette.value = String(params.vignette ?? 65);
+  if (ctrlBloom) ctrlBloom.value = String(params.bloom ?? 35);
+  if (ctrlHaze) ctrlHaze.value = String(params.haze ?? 25);
+  if (ctrlHegsethAngle) ctrlHegsethAngle.value = String(params.angle ?? 0);
+  if (ctrlHegsethGhostDistance) ctrlHegsethGhostDistance.value = String(params.ghostDistance ?? 50);
+  if (ctrlHyperpopAngle) ctrlHyperpopAngle.value = String(params.angle ?? 0);
+  if (ctrlPixelBits) ctrlPixelBits.value = String(params.bits ?? 5);
+  updateVibeExtraControls();
+}
+
+async function restorePaintLayerFromBlob(blob) {
+  if (!blob || !paintLayer) return;
+  try {
+    const img = await loadImgFromBlob(blob);
+    const ctx = getPaintContext();
+    if (!ctx) return;
+    ctx.clearRect(0, 0, paintLayer.width, paintLayer.height);
+    ctx.drawImage(img, 0, 0, paintLayer.width, paintLayer.height);
+    state.paint.hasStrokes = true;
+  } catch {}
+}
+
+async function restoreDraftSession(draft) {
+  if (!draft?.imageBlob) return false;
+  _draftRestoreInProgress = true;
+  try {
+    await loadNormalizedImageBlob(draft.imageBlob);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    state.filter = {
+      name: draft.filter?.name || 'none',
+      intensity: Number.isFinite(draft.filter?.intensity) ? draft.filter.intensity : 75,
+      params: { ...(draft.filter?.params || {}) },
+      applyOnTop: !!draft.filter?.applyOnTop,
+    };
+    state.lastStyle = draft.lastStyle ? { ...draft.lastStyle } : null;
+    state.lastPreset = draft.lastPreset !== undefined ? draft.lastPreset : 'classic';
+    state.paint.color = draft.paint?.color || '#ff3b30';
+    state.paint.size = Number.isFinite(draft.paint?.size) ? draft.paint.size : 8;
+    state.paint.enabled = false;
+    syncPaintControls();
+    syncFilterControlsFromState();
+
+    state.objects.forEach((obj) => obj.destroy?.());
+    state.objects = [];
+    state.selectedObject = null;
+
+    for (const obj of draft.objects || []) {
+      if (obj.type === 'text') {
+        const textObj = new TextObject(obj.xPct ?? 0.5, obj.yPct ?? 0.5, { ...defaultStyle(), ...(obj.style || {}) });
+        textObj.text = obj.text || '';
+        textObj.activePreset = obj.activePreset ?? null;
+        textObj.autoContrastStep = obj.autoContrastStep ?? 0;
+        textObj.innerEl.textContent = textObj.text;
+        textObj._applyStyle();
+        textObj._positionEl();
+        state.objects.push(textObj);
+      } else if (obj.type === 'image' && obj.blob) {
+        const imageObj = new ImageObject(obj.xPct ?? 0.5, obj.yPct ?? 0.5, {
+          aspect: obj.aspect || 1,
+          isVector: !!obj.isVector,
+          objectUrl: URL.createObjectURL(obj.blob),
+          sourceBlob: obj.blob,
+          style: { ...obj.style },
+        });
+        state.objects.push(imageObj);
+      }
+    }
+
+    clearPaintLayer({ schedule: false });
+    if (draft.paint?.blob) {
+      await restorePaintLayerFromBlob(draft.paint.blob);
+    } else {
+      state.paint.hasStrokes = false;
+    }
+
+    deselectAll();
+    updatePanel();
+    syncTextFieldLayering();
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ settle: true, immediate: true, noThrottle: true });
+    showHintMessage('Restored last draft', 1800);
+    scheduleDraftSave({ immediate: true });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    _draftRestoreInProgress = false;
+  }
+}
+
+async function maybeRestoreDraftSession() {
+  const draft = await readDraftRecord();
+  if (!draft?.imageBlob) return;
+  const shouldRestore = confirm('Restore your last draft? Press Cancel to discard it.');
+  if (!shouldRestore) {
+    await discardDraftSession();
+    return;
+  }
+  const restored = await restoreDraftSession(draft);
+  if (!restored) {
+    await discardDraftSession();
+    showHintMessage('Draft restore failed');
+  }
+}
+
 // ─── Image loading ─────────────────────────────────────────────────────────────
 
 const HEIC_MIME_RE = /^image\/hei(c|f|x|s)$/i;
@@ -1947,13 +2266,51 @@ async function normalizeUploadImage(file) {
   return inputBlob;
 }
 
+async function loadNormalizedImageBlob(blob, opts = {}) {
+  const { resetSession = false } = opts;
+  if (!blob) return false;
+  if (resetSession) {
+    showUpload({ preserveDraft: true });
+  }
+  if (state.imageObjectUrl) {
+    URL.revokeObjectURL(state.imageObjectUrl);
+    state.imageObjectUrl = null;
+  }
+  const url = URL.createObjectURL(blob);
+  state.imageObjectUrl = url;
+  state.sourceImageBlob = blob;
+  return await new Promise((resolve, reject) => {
+    baseImage.onload = () => {
+      if (state.imageObjectUrl === url) {
+        URL.revokeObjectURL(url);
+        state.imageObjectUrl = null;
+      }
+      setUploadBusy(false);
+      state.imageNaturalW = baseImage.naturalWidth;
+      state.imageNaturalH = baseImage.naturalHeight;
+      state.imageLoaded = true;
+      markPreviewSourceDirty();
+      showEditor();
+      scheduleDraftSave({ immediate: true });
+      resolve(true);
+    };
+    baseImage.onerror = () => {
+      if (state.imageObjectUrl === url) {
+        URL.revokeObjectURL(url);
+        state.imageObjectUrl = null;
+      }
+      setUploadBusy(false);
+      state.sourceImageBlob = null;
+      reject(new Error('Could not open this image. Please try a different file.'));
+    };
+    baseImage.src = url;
+  });
+}
+
 function loadImageFile(file, opts = {}) {
   const { resetSession = false } = opts;
   if (!file) return;
   if (state.uploadBusy) return;
-  if (resetSession) {
-    showUpload();
-  }
   if (!isLikelyImageFile(file)) {
     alert('Please choose an image file.');
     return;
@@ -1962,33 +2319,7 @@ function loadImageFile(file, opts = {}) {
   (async () => {
     try {
       const normalizedBlob = await normalizeUploadImage(file);
-      if (state.imageObjectUrl) {
-        URL.revokeObjectURL(state.imageObjectUrl);
-        state.imageObjectUrl = null;
-      }
-      const url = URL.createObjectURL(normalizedBlob);
-      state.imageObjectUrl = url;
-      baseImage.onload = () => {
-        if (state.imageObjectUrl === url) {
-          URL.revokeObjectURL(url);
-          state.imageObjectUrl = null;
-        }
-        setUploadBusy(false);
-        state.imageNaturalW = baseImage.naturalWidth;
-        state.imageNaturalH = baseImage.naturalHeight;
-        state.imageLoaded = true;
-        markPreviewSourceDirty();
-        showEditor();
-      };
-      baseImage.onerror = () => {
-        if (state.imageObjectUrl === url) {
-          URL.revokeObjectURL(url);
-          state.imageObjectUrl = null;
-        }
-        setUploadBusy(false);
-        alert('Could not open this image. Please try a different file.');
-      };
-      baseImage.src = url;
+      await loadNormalizedImageBlob(normalizedBlob, { resetSession });
     } catch (err) {
       setUploadBusy(false);
       alert(err?.message || 'Could not open this image. Please try another format.');
@@ -2350,7 +2681,8 @@ function showEditor() {
   showHintMessage('Double-click image to add text', 10000);
 }
 
-function showUpload() {
+function showUpload(opts = {}) {
+  const { preserveDraft = false } = opts;
   editorScreen.classList.remove('active');
   editorScreen.classList.remove('drag-over');
   editorDragEnterCount = 0;
@@ -2361,6 +2693,7 @@ function showUpload() {
   state.imageLoaded = false;
   state.imageNaturalW = 0;
   state.imageNaturalH = 0;
+  state.sourceImageBlob = preserveDraft ? state.sourceImageBlob : null;
   if (state.imageObjectUrl) {
     URL.revokeObjectURL(state.imageObjectUrl);
     state.imageObjectUrl = null;
@@ -2534,8 +2867,9 @@ window.addEventListener('paste', (e) => {
   }
 });
 
-backBtn.addEventListener('click', () => {
+backBtn.addEventListener('click', async () => {
   if (confirm('Start over? Your work will be lost, like tears in the rain.')) {
+    await discardDraftSession();
     showUpload();
   }
 });
@@ -2809,6 +3143,7 @@ class ImageObject {
     this.aspect = opts.aspect || 1;
     this.isVector = !!opts.isVector;
     this.objectUrl = opts.objectUrl || null;
+    this.sourceBlob = opts.sourceBlob || null;
     this.style = { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0, glow: 0, opacity: 1, ...opts.style };
     this.el = null;
     this.imgEl = null;
@@ -2986,6 +3321,7 @@ class ImageObject {
       URL.revokeObjectURL(this.objectUrl);
       this.objectUrl = null;
     }
+    this.sourceBlob = null;
   }
 }
 
@@ -3030,6 +3366,7 @@ function addImageObjectFromBlob(blob, xPct = 0.5, yPct = 0.5, opts = {}) {
         objectUrl,
         aspect,
         isVector: !!opts.isVector,
+        sourceBlob: blob,
         style: { size: DROPPED_IMAGE_OBJECT_SIZE_PCT, rotateDeg: 0, blur: 0, glow: 0, opacity: 1 },
       });
       state.objects.push(imageObj);
@@ -4223,6 +4560,7 @@ function releaseBackgroundPreviewResources() {
 function markPreviewSourceDirty() {
   previewGpuSourceCache.dirty = true;
   previewPixelSourceCache.dirty = true;
+  scheduleDraftSave();
 }
 
 function makePreviewSourceCacheKey(w, h) {
@@ -5442,6 +5780,7 @@ function runScheduledPreviewRender() {
 }
 
 function scheduleImageFilterRender(opts = {}) {
+  scheduleDraftSave();
   if (_appIsBackgrounded || document.visibilityState === 'hidden') {
     _resumeRenderQueued = true;
     return;
@@ -5502,10 +5841,18 @@ function pausePreviewRendering() {
   perf.previewPendingCount = 0;
 }
 
-function recoverFromDiscardedEditorSession() {
+async function recoverFromDiscardedEditorSession() {
   if (!editorScreen.classList.contains('active') || !state.imageLoaded) return false;
   if (baseImage?.naturalWidth > 0 && baseImage?.naturalHeight > 0) return false;
-  showUpload();
+  showUpload({ preserveDraft: true });
+  const draft = await readDraftRecord();
+  if (draft?.imageBlob) {
+    const restored = await restoreDraftSession(draft);
+    if (restored) {
+      showHintMessage('Restored draft after tab suspension', 2200);
+      return true;
+    }
+  }
   alert('This tab was suspended by your browser. Please re-open your image.');
   return true;
 }
@@ -5514,14 +5861,15 @@ function handleAppBecameHidden() {
   if (_appIsBackgrounded) return;
   _appIsBackgrounded = true;
   _resumeRenderQueued = _resumeRenderQueued || state.imageLoaded;
+  scheduleDraftSave({ immediate: true });
   pausePreviewRendering();
   releaseBackgroundPreviewResources();
 }
 
-function handleAppBecameVisible() {
+async function handleAppBecameVisible() {
   if (!_appIsBackgrounded) return;
   _appIsBackgrounded = false;
-  const recovered = recoverFromDiscardedEditorSession();
+  const recovered = await recoverFromDiscardedEditorSession();
   if (recovered) {
     _resumeRenderQueued = false;
     return;
@@ -6353,6 +6701,7 @@ switchPanelTab('typography'); // set initial data-panel attribute
 exportBtn.addEventListener('click', handleSaveAction);
 copyBtn.addEventListener('click', handleCopyAction);
 void refreshCopyActionAvailability();
+void maybeRestoreDraftSession();
 
 let _previewKeyTapCount = 0;
 let _previewKeyTimer = 0;
@@ -6659,7 +7008,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     handleAppBecameHidden();
   } else {
-    handleAppBecameVisible();
+    void handleAppBecameVisible();
   }
 });
 
@@ -6669,7 +7018,7 @@ window.addEventListener('pagehide', () => {
 
 window.addEventListener('pageshow', () => {
   if (document.visibilityState !== 'hidden') {
-    handleAppBecameVisible();
+    void handleAppBecameVisible();
   }
 });
 
