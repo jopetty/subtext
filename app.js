@@ -42,6 +42,14 @@ let _draftSaveQueued = false;
 let _draftSaveInFlight = false;
 let _draftRestoreInProgress = false;
 
+const HISTORY_LIMIT = 100;
+const history = {
+  undoStack: [],
+  redoStack: [],
+  applying: false,
+  pending: null,
+};
+
 const PERF_MAX_SAMPLES = 200;
 const perf = {
   devMode: false,
@@ -2016,6 +2024,214 @@ function syncFilterControlsFromState() {
   updateVibeExtraControls();
 }
 
+function cloneHistoryObject(obj) {
+  if (!obj) return null;
+  if (obj.type === 'text') {
+    return {
+      type: 'text',
+      xPct: obj.xPct,
+      yPct: obj.yPct,
+      style: { ...obj.style },
+      text: obj.text || '',
+      activePreset: obj.activePreset ?? null,
+      autoContrastStep: obj.autoContrastStep ?? 0,
+    };
+  }
+  if (obj.type === 'image') {
+    return {
+      type: 'image',
+      xPct: obj.xPct,
+      yPct: obj.yPct,
+      aspect: obj.aspect,
+      isVector: !!obj.isVector,
+      style: { ...obj.style },
+      blob: obj.sourceBlob || null,
+    };
+  }
+  return null;
+}
+
+function captureHistoryState() {
+  if (!state.imageLoaded) return null;
+  return {
+    objects: state.objects.map((obj) => cloneHistoryObject(obj)).filter(Boolean),
+    filter: {
+      name: state.filter.name,
+      intensity: state.filter.intensity,
+      params: { ...state.filter.params },
+      applyOnTop: !!state.filter.applyOnTop,
+    },
+    paint: {
+      color: state.paint.color,
+      size: state.paint.size,
+      hasStrokes: !!state.paint.hasStrokes,
+      dataUrl: paintLayer && state.paint.hasStrokes && paintLayer.width > 0 && paintLayer.height > 0
+        ? paintLayer.toDataURL('image/png')
+        : null,
+    },
+    lastStyle: state.lastStyle ? { ...state.lastStyle } : null,
+    lastPreset: state.lastPreset ?? null,
+    selectedIndex: state.selectedObject ? state.objects.indexOf(state.selectedObject) : -1,
+  };
+}
+
+function historySnapshotDigest(snapshot) {
+  if (!snapshot) return '';
+  return JSON.stringify(snapshot, (key, value) => {
+    if (key === 'selectedIndex') return undefined;
+    if (value instanceof Blob) {
+      return { __blob: true, size: value.size, type: value.type };
+    }
+    return value;
+  });
+}
+
+function resetHistory() {
+  history.undoStack = [];
+  history.redoStack = [];
+  history.pending = null;
+}
+
+function pushHistoryEntry(label, before, after) {
+  if (history.applying) return;
+  if (!before || !after) return;
+  if (historySnapshotDigest(before) === historySnapshotDigest(after)) return;
+  history.undoStack.push({ label, before, after });
+  if (history.undoStack.length > HISTORY_LIMIT) history.undoStack.shift();
+  history.redoStack = [];
+  history.pending = null;
+}
+
+function beginHistoryAction(label) {
+  if (history.applying || !state.imageLoaded) return;
+  if (history.pending) return;
+  history.pending = {
+    label,
+    before: captureHistoryState(),
+  };
+}
+
+function commitHistoryAction(label = history.pending?.label) {
+  if (!history.pending || history.applying) return;
+  const before = history.pending.before;
+  const after = captureHistoryState();
+  history.pending = null;
+  pushHistoryEntry(label || 'Edit', before, after);
+}
+
+function cancelHistoryAction() {
+  history.pending = null;
+}
+
+async function restorePaintLayerFromDataUrl(dataUrl) {
+  clearPaintLayer({ schedule: false });
+  if (!dataUrl || !paintLayer) return;
+  await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const ctx = getPaintContext();
+      if (ctx) {
+        ctx.clearRect(0, 0, paintLayer.width, paintLayer.height);
+        ctx.drawImage(img, 0, 0, paintLayer.width, paintLayer.height);
+        state.paint.hasStrokes = true;
+      }
+      resolve();
+    };
+    img.onerror = () => resolve();
+    img.src = dataUrl;
+  });
+}
+
+function createObjectFromHistorySnapshot(snapshot) {
+  if (!snapshot) return null;
+  if (snapshot.type === 'text') {
+    const obj = new TextObject(snapshot.xPct ?? 0.5, snapshot.yPct ?? 0.5, { ...defaultStyle(), ...(snapshot.style || {}) });
+    obj.text = snapshot.text || '';
+    obj.activePreset = snapshot.activePreset ?? null;
+    obj.autoContrastStep = snapshot.autoContrastStep ?? 0;
+    obj.innerEl.textContent = obj.text;
+    obj._applyStyle();
+    obj._positionEl();
+    return obj;
+  }
+  if (snapshot.type === 'image' && snapshot.blob) {
+    return new ImageObject(snapshot.xPct ?? 0.5, snapshot.yPct ?? 0.5, {
+      aspect: snapshot.aspect || 1,
+      isVector: !!snapshot.isVector,
+      objectUrl: URL.createObjectURL(snapshot.blob),
+      sourceBlob: snapshot.blob,
+      style: { ...snapshot.style },
+    });
+  }
+  return null;
+}
+
+async function restoreHistoryState(snapshot) {
+  if (!snapshot || !state.imageLoaded) return;
+  history.applying = true;
+  cancelHistoryAction();
+  try {
+    deselectAll();
+    state.objects.forEach((obj) => obj.destroy?.());
+    state.objects = [];
+    state.selectedObject = null;
+
+    state.filter = {
+      name: snapshot.filter?.name || 'none',
+      intensity: Number.isFinite(snapshot.filter?.intensity) ? snapshot.filter.intensity : 75,
+      params: { ...(snapshot.filter?.params || {}) },
+      applyOnTop: !!snapshot.filter?.applyOnTop,
+    };
+    state.paint.color = snapshot.paint?.color || '#ff3b30';
+    state.paint.size = Number.isFinite(snapshot.paint?.size) ? snapshot.paint.size : 8;
+    state.paint.enabled = false;
+    state.paint.hasStrokes = false;
+    state.lastStyle = snapshot.lastStyle ? { ...snapshot.lastStyle } : null;
+    state.lastPreset = snapshot.lastPreset ?? null;
+
+    for (const item of snapshot.objects || []) {
+      const obj = createObjectFromHistorySnapshot(item);
+      if (obj) state.objects.push(obj);
+    }
+
+    syncPaintControls();
+    syncPaintInteractivity();
+    syncFilterControlsFromState();
+    await restorePaintLayerFromDataUrl(snapshot.paint?.dataUrl || null);
+
+    const selectedIndex = Number.isInteger(snapshot.selectedIndex) ? snapshot.selectedIndex : -1;
+    if (selectedIndex >= 0 && state.objects[selectedIndex]) {
+      selectField(state.objects[selectedIndex]);
+    } else {
+      updatePanel();
+    }
+    syncTextFieldLayering();
+    markPreviewSourceDirty();
+    scheduleImageFilterRender({ settle: true, immediate: true, noThrottle: true });
+  } finally {
+    history.applying = false;
+  }
+}
+
+async function performUndo() {
+  commitHistoryAction();
+  if (!history.undoStack.length || history.applying || !state.imageLoaded) return;
+  const entry = history.undoStack.pop();
+  history.redoStack.push(entry);
+  await restoreHistoryState(entry.before);
+  showHintMessage('Undid change', 900);
+}
+
+async function performRedo() {
+  if (history.applying || !state.imageLoaded) return;
+  commitHistoryAction();
+  if (!history.redoStack.length) return;
+  const entry = history.redoStack.pop();
+  history.undoStack.push(entry);
+  await restoreHistoryState(entry.after);
+  showHintMessage('Redid change', 900);
+}
+
 async function restorePaintLayerFromBlob(blob) {
   if (!blob || !paintLayer) return;
   try {
@@ -2660,6 +2876,7 @@ function showEditor() {
   state.lastStyle = null;
   state.paint.enabled = false;
   state.paint.hasStrokes = false;
+  resetHistory();
   _paintMinX = Infinity;
   _paintMinY = Infinity;
   _paintMaxX = -Infinity;
@@ -2683,6 +2900,7 @@ function showEditor() {
 
 function showUpload(opts = {}) {
   const { preserveDraft = false } = opts;
+  resetHistory();
   editorScreen.classList.remove('active');
   editorScreen.classList.remove('drag-over');
   editorDragEnterCount = 0;
@@ -2887,6 +3105,7 @@ class TextObject {
     this.style = { lineHeight: 1.2, rotateDeg: 0, ...style };
     this.text = '';
     this.autoContrastStep = 0;
+    this._historyBeforeEdit = null;
     this._pendingAnchorWidthPx = null;
     this.el = null;
     this.innerEl = null;
@@ -3023,12 +3242,17 @@ class TextObject {
     // This fires whenever the user clicks or tabs into the contenteditable,
     // which is far more reliable than intercepting pointerdown ourselves.
     this.innerEl.addEventListener('focus', () => {
+      this._historyBeforeEdit = captureHistoryState();
       this.el.classList.add('editing');
       selectField(this);
     });
 
     this.innerEl.addEventListener('blur', () => {
       this.el.classList.remove('editing');
+      if (this._historyBeforeEdit) {
+        pushHistoryEntry('Edit text', this._historyBeforeEdit, captureHistoryState());
+        this._historyBeforeEdit = null;
+      }
     });
 
     // Direct-drag interaction: click+drag moves object; click on selected text enters edit mode.
@@ -3328,6 +3552,7 @@ class ImageObject {
 // ─── Field management ─────────────────────────────────────────────────────────
 
 function addTextObject(xPct, yPct) {
+  const historyBefore = captureHistoryState();
   const style = defaultStyle();
   const tf = new TextObject(xPct, yPct, style);
   tf.activePreset = state.lastPreset; // inherit last-used preset (null = manually edited)
@@ -3348,6 +3573,7 @@ function addTextObject(xPct, yPct) {
   focusNewField();
   requestAnimationFrame(focusNewField);
   setTimeout(focusNewField, 30);
+  pushHistoryEntry('Add text', historyBefore, captureHistoryState());
   return tf;
 }
 
@@ -3355,6 +3581,7 @@ function addTextObject(xPct, yPct) {
 const addTextField = addTextObject;
 
 function addImageObjectFromBlob(blob, xPct = 0.5, yPct = 0.5, opts = {}) {
+  const historyBefore = captureHistoryState();
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(blob);
     const probe = new Image();
@@ -3373,6 +3600,7 @@ function addImageObjectFromBlob(blob, xPct = 0.5, yPct = 0.5, opts = {}) {
       selectField(imageObj);
       markPreviewSourceDirty();
       scheduleImageFilterRender({ settle: true });
+      pushHistoryEntry('Add object', historyBefore, captureHistoryState());
       resolve(imageObj);
     };
     probe.onerror = () => {
@@ -3409,6 +3637,7 @@ function addImageObjectFromFile(file, opts = {}) {
 }
 
 function deleteField(tf) {
+  const historyBefore = captureHistoryState();
   tf.destroy?.();
   state.objects = state.objects.filter(f => f !== tf);
   if (state.selectedObject === tf) {
@@ -3418,6 +3647,7 @@ function deleteField(tf) {
   syncTextFieldLayering();
   scheduleImageFilterRender({ settle: true });
   updatePanel();
+  pushHistoryEntry('Delete object', historyBefore, captureHistoryState());
 }
 
 function selectField(tf) {
@@ -3652,6 +3882,7 @@ function getRotationSnapAxis(snapDeg) {
 
 function startDrag(e, tf, opts = {}) {
   const focusOnClick = !!opts.focusOnClick;
+  const historyBefore = captureHistoryState();
   const startX   = e.clientX;
   const startY   = e.clientY;
   const origXPct = tf.xPct;
@@ -3697,6 +3928,7 @@ function startDrag(e, tf, opts = {}) {
     tf.el.classList.remove('dragging');
     if (dragging) {
       tf.innerEl?.blur?.();
+      pushHistoryEntry('Move object', historyBefore, captureHistoryState());
     } else if (focusOnClick) {
       tf.innerEl?.focus?.();
     }
@@ -3745,6 +3977,7 @@ function syncSizeControlBoundsForObject(obj = state.selectedObject) {
 }
 
 function startRotate(e, tf) {
+  const historyBefore = captureHistoryState();
   const rect = canvasContainer.getBoundingClientRect();
   const centerX = rect.left + tf.xPct * canvasContainer.offsetWidth;
   const centerY = rect.top + tf.yPct * canvasContainer.offsetHeight;
@@ -3779,6 +4012,7 @@ function startRotate(e, tf) {
     tf.el.classList.remove('rotating');
     tf.rotateEl.classList.remove('snapped');
     showRotateGuides(false);
+    pushHistoryEntry('Rotate object', historyBefore, captureHistoryState());
   }
 
   window.addEventListener('pointermove', onMove, { passive: false });
@@ -3787,6 +4021,7 @@ function startRotate(e, tf) {
 }
 
 function startResize(e, tf) {
+  const historyBefore = captureHistoryState();
   const rect = canvasContainer.getBoundingClientRect();
   const centerX = rect.left + tf.xPct * canvasContainer.offsetWidth;
   const centerY = rect.top + tf.yPct * canvasContainer.offsetHeight;
@@ -3810,6 +4045,7 @@ function startResize(e, tf) {
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
     tf.el.classList.remove('resizing');
+    pushHistoryEntry('Resize object', historyBefore, captureHistoryState());
   }
 
   window.addEventListener('pointermove', onMove, { passive: false });
@@ -4355,73 +4591,105 @@ if (paintLayer) {
 // ─── Control listeners ────────────────────────────────────────────────────────
 
 ctrlFont.addEventListener('change', () => {
+  const before = captureHistoryState();
   applyControlsToSelected({ font: ctrlFont.value });
   syncFontSelectDisplay();
   clearPreset();
+  pushHistoryEntry('Change font', before, captureHistoryState());
 });
 
 ctrlSize.addEventListener('input', () => {
+  beginHistoryAction('Resize object');
   const v = parseFloat(ctrlSize.value);
   ctrlSizeVal.textContent = v + '%';
   applyObjectControlsToSelected({ size: v });
   clearPreset();
 });
+ctrlSize.addEventListener('change', () => {
+  commitHistoryAction('Resize object');
+});
 
 ctrlLineHeight.addEventListener('input', () => {
+  beginHistoryAction('Adjust line height');
   const v = parseFloat(ctrlLineHeight.value);
   ctrlLineHeightVal.textContent = v.toFixed(2);
   applyControlsToSelected({ lineHeight: v });
   clearPreset();
 });
+ctrlLineHeight.addEventListener('change', () => {
+  commitHistoryAction('Adjust line height');
+});
 
 ctrlBold.addEventListener('click', () => {
+  const before = captureHistoryState();
   const isNowBold = !ctrlBold.classList.contains('active');
   ctrlBold.classList.toggle('active', isNowBold);
   applyControlsToSelected({ weight: isNowBold ? '700' : '400' });
   clearPreset();
+  pushHistoryEntry('Toggle bold', before, captureHistoryState());
 });
 
 ctrlItalic.addEventListener('click', () => {
+  const before = captureHistoryState();
   const isNowItalic = !ctrlItalic.classList.contains('active');
   ctrlItalic.classList.toggle('active', isNowItalic);
   applyControlsToSelected({ italic: isNowItalic });
   clearPreset();
+  pushHistoryEntry('Toggle italic', before, captureHistoryState());
 });
 
 ctrlBlur.addEventListener('input', () => {
+  beginHistoryAction('Adjust blur');
   applyObjectControlsToSelected({ blur: parseFloat(ctrlBlur.value) });
   clearPreset();
+});
+ctrlBlur.addEventListener('change', () => {
+  commitHistoryAction('Adjust blur');
 });
 
 if (ctrlGlow) {
   ctrlGlow.addEventListener('input', () => {
+    beginHistoryAction('Adjust glow');
     applyObjectControlsToSelected({ glow: parseFloat(ctrlGlow.value) });
     clearPreset();
+  });
+  ctrlGlow.addEventListener('change', () => {
+    commitHistoryAction('Adjust glow');
   });
 }
 
 if (ctrlOpacity) {
   ctrlOpacity.addEventListener('input', () => {
+    beginHistoryAction('Adjust opacity');
     applyObjectControlsToSelected({ opacity: clampObjectOpacity(parseFloat(ctrlOpacity.value)) });
     clearPreset();
+  });
+  ctrlOpacity.addEventListener('change', () => {
+    commitHistoryAction('Adjust opacity');
   });
 }
 
 if (ctrlBgColor) {
   ctrlBgColor.addEventListener('input', () => {
+    beginHistoryAction('Change object background');
     if (ctrlBgEnabled && !ctrlBgEnabled.checked) ctrlBgEnabled.checked = true;
     applyObjectControlsToSelected({ bgColor: ctrlBgColor.value });
     clearPreset();
+  });
+  ctrlBgColor.addEventListener('change', () => {
+    commitHistoryAction('Change object background');
   });
 }
 
 if (ctrlBgEnabled) {
   ctrlBgEnabled.addEventListener('change', () => {
+    const before = captureHistoryState();
     if (ctrlBgColor) ctrlBgColor.disabled = !ctrlBgEnabled.checked;
     applyObjectControlsToSelected({
       bgColor: ctrlBgEnabled.checked ? ctrlBgColor?.value || '#ffffff' : null,
     });
     clearPreset();
+    pushHistoryEntry('Toggle object background', before, captureHistoryState());
   });
 }
 
@@ -5906,6 +6174,7 @@ function updateVibeExtraControls() {
 
 filterChips.forEach(chip => {
   chip.addEventListener('click', () => {
+    const before = captureHistoryState();
     // Avoid deferred stale render when switching filters quickly.
     if (_filterRenderRaf) {
       cancelAnimationFrame(_filterRenderRaf);
@@ -5951,91 +6220,113 @@ filterChips.forEach(chip => {
     }
     updateVibeExtraControls();
     scheduleImageFilterRender({ settle: true });
+    pushHistoryEntry('Change vibe', before, captureHistoryState());
   });
 });
 
 ctrlFilterIntensity.addEventListener('input', () => {
+  beginHistoryAction('Adjust vibe intensity');
   state.filter.intensity = parseInt(ctrlFilterIntensity.value);
   scheduleImageFilterRender({ interactive: true });
 });
+ctrlFilterIntensity.addEventListener('change', () => {
+  commitHistoryAction('Adjust vibe intensity');
+});
 
 ctrlFilterOnTop.addEventListener('change', () => {
+  const before = captureHistoryState();
   state.filter.applyOnTop = ctrlFilterOnTop.checked;
   markPreviewSourceDirty();
   scheduleImageFilterRender({ settle: true });
+  pushHistoryEntry('Toggle object filtering', before, captureHistoryState());
 });
 
 ctrlGrain.addEventListener('input', () => {
+  beginHistoryAction('Adjust film grain');
   state.filter.params.grain = parseInt(ctrlGrain.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlDitherMono.addEventListener('input', () => {
+  beginHistoryAction('Adjust dithering');
   state.filter.params.mono = parseInt(ctrlDitherMono.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlDitherFg.addEventListener('input', () => {
+  beginHistoryAction('Adjust dithering');
   state.filter.params.fgColor = ctrlDitherFg.value;
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlDitherBg.addEventListener('input', () => {
+  beginHistoryAction('Adjust dithering');
   state.filter.params.bgColor = ctrlDitherBg.value;
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlScanlines.addEventListener('input', () => {
+  beginHistoryAction('Adjust vaporwave effect');
   state.filter.params.scanlines = parseInt(ctrlScanlines.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlScanlineSize.addEventListener('input', () => {
+  beginHistoryAction('Adjust vaporwave effect');
   state.filter.params.scanlineSize = parseInt(ctrlScanlineSize.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlChroma.addEventListener('input', () => {
+  beginHistoryAction('Adjust vaporwave effect');
   state.filter.params.chroma = parseInt(ctrlChroma.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlDaGrain.addEventListener('input', () => {
+  beginHistoryAction('Adjust dark academia effect');
   state.filter.params.grain = parseInt(ctrlDaGrain.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlVignette.addEventListener('input', () => {
+  beginHistoryAction('Adjust dark academia effect');
   state.filter.params.vignette = parseInt(ctrlVignette.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlBloom.addEventListener('input', () => {
+  beginHistoryAction('Adjust solarpunk effect');
   state.filter.params.bloom = parseInt(ctrlBloom.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlHaze.addEventListener('input', () => {
+  beginHistoryAction('Adjust solarpunk effect');
   state.filter.params.haze = parseInt(ctrlHaze.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlHegsethAngle.addEventListener('input', () => {
+  beginHistoryAction('Adjust hegseth effect');
   state.filter.params.angle = parseInt(ctrlHegsethAngle.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlHegsethGhostDistance.addEventListener('input', () => {
+  beginHistoryAction('Adjust hegseth effect');
   state.filter.params.ghostDistance = parseInt(ctrlHegsethGhostDistance.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlHyperpopAngle.addEventListener('input', () => {
+  beginHistoryAction('Adjust hyperpop effect');
   state.filter.params.angle = parseInt(ctrlHyperpopAngle.value);
   scheduleImageFilterRender({ interactive: true });
 });
 
 ctrlPixelBits.addEventListener('input', () => {
+  beginHistoryAction('Adjust pixel art effect');
   state.filter.params.bits = parseInt(ctrlPixelBits.value);
   scheduleImageFilterRender({ interactive: true });
 });
@@ -6061,40 +6352,58 @@ ctrlPixelBits.addEventListener('input', () => {
   if (!el) return;
   el.addEventListener('change', () => {
     scheduleImageFilterRender({ settle: true });
+    commitHistoryAction();
   });
 });
 
 ctrlFgColor.addEventListener('input', () => {
+  beginHistoryAction('Change text color');
   applyControlsToSelected({ fgColor: ctrlFgColor.value });
   clearPreset();
 });
+ctrlFgColor.addEventListener('change', () => {
+  commitHistoryAction('Change text color');
+});
 ctrlOutlineColor.addEventListener('input', () => {
+  beginHistoryAction('Change outline color');
   applyControlsToSelected({ outlineColor: ctrlOutlineColor.value });
   clearPreset();
 });
+ctrlOutlineColor.addEventListener('change', () => {
+  commitHistoryAction('Change outline color');
+});
 
 ctrlOutlineWidth.addEventListener('input', () => {
+  beginHistoryAction('Adjust outline width');
   const v = parseFloat(ctrlOutlineWidth.value);
   ctrlOutlineWidthVal.textContent = v;
   applyControlsToSelected({ outlineWidth: v });
   clearPreset();
 });
+ctrlOutlineWidth.addEventListener('change', () => {
+  commitHistoryAction('Adjust outline width');
+});
 
 ctrlAutoContrast.addEventListener('click', () => {
+  const before = captureHistoryState();
   applyAutoContrastToSelected();
+  pushHistoryEntry('Auto contrast text', before, captureHistoryState());
 });
 
 alignBtns.forEach(btn => {
   btn.addEventListener('click', () => {
+    const before = captureHistoryState();
     alignBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     applyControlsToSelected({ align: btn.dataset.align });
     clearPreset();
+    pushHistoryEntry('Change alignment', before, captureHistoryState());
   });
 });
 
 presetBtns.forEach(btn => {
   btn.addEventListener('click', () => {
+    const before = captureHistoryState();
     const preset = PRESETS[btn.dataset.preset];
     if (!preset) return;
     // Preserve object-level styling and geometry — presets only target text traits.
@@ -6116,6 +6425,7 @@ presetBtns.forEach(btn => {
       syncObjectControlsToStyle(state.lastStyle);
       syncTextControlsToStyle(state.lastStyle, btn.dataset.preset);
     }
+    pushHistoryEntry('Apply preset', before, captureHistoryState());
   });
 });
 
@@ -6937,6 +7247,25 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
+  const isUndoCombo = (e.metaKey || e.ctrlKey) && !e.altKey && !e.repeat && e.key.toLowerCase() === 'z';
+  const isRedoCombo =
+    (e.metaKey || e.ctrlKey) &&
+    !e.altKey &&
+    !e.repeat &&
+    (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey));
+  if (!isUndoCombo && !isRedoCombo) return;
+  if (!editorScreen.classList.contains('active') || !state.imageLoaded) return;
+  const active = document.activeElement;
+  if (active?.isContentEditable) return;
+  e.preventDefault();
+  if (isRedoCombo) {
+    void performRedo();
+  } else {
+    void performUndo();
+  }
+});
+
+window.addEventListener('keydown', (e) => {
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
   if (!editorScreen.classList.contains('active')) return;
   if (!state.selectedObject) return;
@@ -6953,6 +7282,7 @@ window.addEventListener('keydown', (e) => {
   else return;
 
   e.preventDefault();
+  const before = captureHistoryState();
   const cw = Math.max(1, canvasContainer.offsetWidth);
   const ch = Math.max(1, canvasContainer.offsetHeight);
   const obj = state.selectedObject;
@@ -6962,6 +7292,7 @@ window.addEventListener('keydown', (e) => {
   syncSizeControlBoundsForObject(obj);
   markPreviewSourceDirty();
   scheduleImageFilterRender({ interactive: true });
+  pushHistoryEntry('Move object', before, captureHistoryState());
 });
 
 window.addEventListener('keydown', (e) => {
