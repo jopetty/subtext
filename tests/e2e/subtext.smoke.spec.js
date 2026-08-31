@@ -58,13 +58,13 @@ test('upload and add caption text field', async ({ page }) => {
   await expect(inner).toContainText('Test caption');
 });
 
-test('save button triggers a jpeg download', async ({ page }) => {
+test('save button triggers a PNG download', async ({ page }) => {
   await uploadImage(page);
 
   const downloadPromise = page.waitForEvent('download');
   await page.click('#export-btn');
   const download = await downloadPromise;
-  expect(download.suggestedFilename().toLowerCase()).toMatch(/^subtext.*\.jpg$/);
+  expect(download.suggestedFilename().toLowerCase()).toMatch(/^subtext.*\.png$/);
 });
 
 test('double-s keyboard shortcut triggers save download', async ({ page }) => {
@@ -76,7 +76,7 @@ test('double-s keyboard shortcut triggers save download', async ({ page }) => {
   await page.keyboard.press('s');
   const download = await downloadPromise;
 
-  expect(download.suggestedFilename().toLowerCase()).toMatch(/^subtext.*\.jpg$/);
+  expect(download.suggestedFilename().toLowerCase()).toMatch(/^subtext.*\.png$/);
 });
 
 test('deep links fall back to the app shell', async ({ page }) => {

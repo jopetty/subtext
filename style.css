@@ -773,6 +773,7 @@ html, body {
 
 #canvas-container.paint-mode #paint-layer {
   pointer-events: auto;
+  z-index: 40;
 }
 
 #base-image {
@@ -1001,6 +1002,7 @@ html, body {
 }
 
 .text-field.selected {
+  z-index: 50;
   outline: 1.5px dashed rgba(255,255,255,0.6);
   outline-offset: 4px;
 }
@@ -1062,7 +1064,8 @@ html, body {
   gap: 1.05rem;
 }
 
-#paint-controls {
+#paint-controls,
+#erase-controls {
   display: flex;
   flex-direction: column;
   gap: 1.05rem;
@@ -1192,6 +1195,24 @@ html, body {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+#erase-toggle-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+#erase-toggle-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  gap: 0;
+}
+
+#erase-toggle-btn svg {
+  flex: 0 0 auto;
 }
 
 .paint-toggle-btn.active img {
@@ -1456,7 +1477,9 @@ html, body {
   flex-shrink: 0;
   border: 0;
   background: transparent;
-  align-self: center;
+  /* Align with the controls themselves, rather than the label + control stack. */
+  align-self: flex-start;
+  margin-top: calc(0.72rem + var(--panel-space-1) + 4px);
 }
 
 .cycle-btn img {
@@ -1605,6 +1628,12 @@ input[type="range"]::-moz-range-thumb {
 
 .vibe-layer-label {
   margin-bottom: 0;
+}
+
+/* The erase target is associated with the brush input, not its label. */
+#erase-controls .vibe-layer-toggle {
+  align-self: flex-start;
+  margin-top: calc(0.72rem + var(--panel-space-1) + 6px);
 }
 
 .vibe-layer-toggle input[type="checkbox"]:checked + .vibe-layer-switch {
@@ -1905,7 +1934,8 @@ input[type="range"]::-moz-range-thumb {
     padding-top: 0;
   }
 
-  #paint-controls {
+  #paint-controls,
+  #erase-controls {
     grid-column: 1;
     grid-row: 2;
     flex: none;
@@ -1937,7 +1967,8 @@ input[type="range"]::-moz-range-thumb {
 
   #bottom-panel[data-panel="object"] #font-controls,
   #bottom-panel[data-panel="vibe"] #font-controls,
-  #bottom-panel[data-panel="paint"] #font-controls {
+  #bottom-panel[data-panel="paint"] #font-controls,
+  #bottom-panel[data-panel="erase"] #font-controls {
     visibility: hidden;
     pointer-events: none;
   }
@@ -1956,7 +1987,9 @@ input[type="range"]::-moz-range-thumb {
   }
 
   #bottom-panel[data-panel="paint"] #object-controls,
-  #bottom-panel[data-panel="paint"] #filter-section {
+  #bottom-panel[data-panel="paint"] #filter-section,
+  #bottom-panel[data-panel="erase"] #object-controls,
+  #bottom-panel[data-panel="erase"] #filter-section {
     visibility: hidden;
     pointer-events: none;
   }
@@ -1981,7 +2014,16 @@ input[type="range"]::-moz-range-thumb {
     padding-top: 0.4rem;
   }
 
-  #bottom-panel[data-panel="paint"] {
+  #bottom-panel[data-panel="erase"] #erase-controls {
+    height: auto;
+    overflow: visible;
+    opacity: 1;
+    pointer-events: auto;
+    padding-top: 0.4rem;
+  }
+
+  #bottom-panel[data-panel="paint"],
+  #bottom-panel[data-panel="erase"] {
     overflow-y: auto;
   }
 
@@ -2212,7 +2254,8 @@ input[type="range"]::-moz-range-thumb {
   #font-controls,
   #object-controls,
   #filter-section,
-  #paint-controls {
+  #paint-controls,
+  #erase-controls {
     height: auto;
     flex: none;         /* reset the mobile flex: 1 */
     justify-content: flex-start;

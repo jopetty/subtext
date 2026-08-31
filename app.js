@@ -44,6 +44,7 @@ const state = {
     size: 8,
     hasStrokes: false,
   },
+  erase: { enabled: false, size: 24, applyToBackground: false, objectHasStrokes: false, backgroundHasStrokes: false },
 };
 
 const DRAFT_SAVE_DEBOUNCE_MS = 450;
@@ -1821,6 +1822,9 @@ const exportBtn      = document.getElementById('export-btn');
 const copyBtn        = document.getElementById('copy-btn');
 const baseImage      = document.getElementById('base-image');
 const paintLayer     = document.getElementById('paint-layer');
+const eraseToggleBtn = document.getElementById('erase-toggle-btn');
+const ctrlEraseSize = document.getElementById('ctrl-erase-size');
+const ctrlEraseBackground = document.getElementById('ctrl-erase-background');
 const canvasWrapper   = document.getElementById('canvas-wrapper');
 const canvasContainer = document.getElementById('canvas-container');
 const canvasHint      = document.getElementById('canvas-hint');
@@ -1916,6 +1920,15 @@ async function serializePaintLayerBlob() {
   return await canvasToBlob(paintLayer, 'image/png');
 }
 
+async function serializeEraseLayerBlob(target) {
+  const layer = target === 'background' ? _eraseBackgroundLayer : _eraseObjectLayer;
+  const hasStrokes = target === 'background' ? state.erase.backgroundHasStrokes : state.erase.objectHasStrokes;
+  if (!layer || !hasStrokes || layer.width <= 0 || layer.height <= 0) {
+    return null;
+  }
+  return await canvasToBlob(layer, 'image/png');
+}
+
 async function serializeDraftObject(obj) {
   if (!obj) return null;
   if (obj.type === 'text') {
@@ -1968,6 +1981,12 @@ async function serializeDraftSession() {
       size: state.paint.size,
       hasStrokes: !!state.paint.hasStrokes,
       blob: await serializePaintLayerBlob(),
+    },
+    erase: {
+      size: state.erase.size,
+      applyToBackground: !!state.erase.applyToBackground,
+      objectBlob: await serializeEraseLayerBlob('objects'),
+      backgroundBlob: await serializeEraseLayerBlob('background'),
     },
     lastStyle: state.lastStyle ? { ...state.lastStyle } : null,
     lastPreset: state.lastPreset ?? null,
@@ -2090,6 +2109,12 @@ function captureHistoryState() {
         ? paintLayer.toDataURL('image/png')
         : null,
     },
+    erase: {
+      size: state.erase.size,
+      applyToBackground: !!state.erase.applyToBackground,
+      objectDataUrl: _eraseObjectLayer && state.erase.objectHasStrokes ? _eraseObjectLayer.toDataURL('image/png') : null,
+      backgroundDataUrl: _eraseBackgroundLayer && state.erase.backgroundHasStrokes ? _eraseBackgroundLayer.toDataURL('image/png') : null,
+    },
     lastStyle: state.lastStyle ? { ...state.lastStyle } : null,
     lastPreset: state.lastPreset ?? null,
     selectedIndex: state.selectedObject ? state.objects.indexOf(state.selectedObject) : -1,
@@ -2136,6 +2161,34 @@ async function restorePaintLayerFromDataUrl(dataUrl) {
   });
 }
 
+function clearEraseLayer() {
+  for (const [layer, ctx] of [[_eraseObjectLayer, _eraseObjectCtx], [_eraseBackgroundLayer, _eraseBackgroundCtx]]) {
+    if (layer && ctx) ctx.clearRect(0, 0, layer.width, layer.height);
+  }
+  state.erase.objectHasStrokes = false;
+  state.erase.backgroundHasStrokes = false;
+}
+
+async function restoreEraseLayer(source, target) {
+  if (!source) return;
+  try {
+    const img = typeof source === 'string'
+      ? await new Promise((resolve, reject) => {
+          const loaded = new Image();
+          loaded.onload = () => resolve(loaded);
+          loaded.onerror = reject;
+          loaded.src = source;
+        })
+      : await loadImgFromBlob(source);
+    const ctx = getEraseContext(target);
+    const layer = target === 'background' ? _eraseBackgroundLayer : _eraseObjectLayer;
+    ctx.clearRect(0, 0, layer.width, layer.height);
+    ctx.drawImage(img, 0, 0, layer.width, layer.height);
+    if (target === 'background') state.erase.backgroundHasStrokes = true;
+    else state.erase.objectHasStrokes = true;
+  } catch {}
+}
+
 function createObjectFromHistorySnapshot(snapshot) {
   if (!snapshot) return null;
   if (snapshot.type === 'text') {
@@ -2180,6 +2233,11 @@ async function restoreHistoryState(snapshot) {
     state.paint.size = Number.isFinite(snapshot.paint?.size) ? snapshot.paint.size : 8;
     state.paint.enabled = false;
     state.paint.hasStrokes = false;
+    state.erase.size = Number.isFinite(snapshot.erase?.size) ? snapshot.erase.size : 24;
+    state.erase.applyToBackground = !!snapshot.erase?.applyToBackground;
+    state.erase.enabled = false;
+    state.erase.objectHasStrokes = false;
+    state.erase.backgroundHasStrokes = false;
     state.lastStyle = snapshot.lastStyle ? { ...snapshot.lastStyle } : null;
     state.lastPreset = snapshot.lastPreset ?? null;
 
@@ -2189,9 +2247,13 @@ async function restoreHistoryState(snapshot) {
     }
 
     syncPaintControls();
+    syncEraseControls();
     syncPaintInteractivity();
     syncFilterControlsFromState();
     await restorePaintLayerFromDataUrl(snapshot.paint?.dataUrl || null);
+    clearEraseLayer();
+    await restoreEraseLayer(snapshot.erase?.objectDataUrl || null, 'objects');
+    await restoreEraseLayer(snapshot.erase?.backgroundDataUrl || null, 'background');
 
     const selectedIndex = Number.isInteger(snapshot.selectedIndex) ? snapshot.selectedIndex : -1;
     if (selectedIndex >= 0 && state.objects[selectedIndex]) {
@@ -2257,6 +2319,12 @@ async function restoreDraftSession(draft) {
     state.paint.size = Number.isFinite(draft.paint?.size) ? draft.paint.size : 8;
     state.paint.enabled = false;
     syncPaintControls();
+    state.erase.size = Number.isFinite(draft.erase?.size) ? draft.erase.size : 24;
+    state.erase.applyToBackground = !!draft.erase?.applyToBackground;
+    state.erase.enabled = false;
+    state.erase.objectHasStrokes = false;
+    state.erase.backgroundHasStrokes = false;
+    syncEraseControls();
     syncFilterControlsFromState();
 
     state.objects.forEach((obj) => obj.destroy?.());
@@ -2291,6 +2359,11 @@ async function restoreDraftSession(draft) {
     } else {
       state.paint.hasStrokes = false;
     }
+    clearEraseLayer();
+    // Drafts saved before per-stroke targeting had one mask; preserve its
+    // original target when restoring.
+    await restoreEraseLayer(draft.erase?.objectBlob || (draft.erase?.applyToBackground ? null : draft.erase?.blob), 'objects');
+    await restoreEraseLayer(draft.erase?.backgroundBlob || (draft.erase?.applyToBackground ? draft.erase?.blob : null), 'background');
 
     deselectAll();
     updatePanel();
@@ -2694,6 +2767,11 @@ let _paintMinX = Infinity;
 let _paintMinY = Infinity;
 let _paintMaxX = -Infinity;
 let _paintMaxY = -Infinity;
+let _eraseObjectLayer = null;
+let _eraseObjectCtx = null;
+let _eraseBackgroundLayer = null;
+let _eraseBackgroundCtx = null;
+let _eraseHistoryBefore = null;
 
 function getPaintContext() {
   if (!_paintCtx && paintLayer) {
@@ -2702,8 +2780,70 @@ function getPaintContext() {
   return _paintCtx;
 }
 
+function getEraseContext(target = state.erase.applyToBackground ? 'background' : 'objects') {
+  const isBackground = target === 'background';
+  let layer = isBackground ? _eraseBackgroundLayer : _eraseObjectLayer;
+  let ctx = isBackground ? _eraseBackgroundCtx : _eraseObjectCtx;
+  if (!layer) layer = document.createElement('canvas');
+  const w = Math.max(1, paintLayer?.width || 1);
+  const h = Math.max(1, paintLayer?.height || 1);
+  if (layer.width !== w || layer.height !== h) {
+    const previous = layer.width ? layer : null;
+    const copy = previous ? document.createElement('canvas') : null;
+    if (copy) { copy.width = previous.width; copy.height = previous.height; copy.getContext('2d').drawImage(previous, 0, 0); }
+    layer.width = w; layer.height = h;
+    ctx = layer.getContext('2d');
+    if (copy) ctx.drawImage(copy, 0, 0, w, h);
+  }
+  if (isBackground) { _eraseBackgroundLayer = layer; _eraseBackgroundCtx = ctx || layer.getContext('2d'); return _eraseBackgroundCtx; }
+  _eraseObjectLayer = layer; _eraseObjectCtx = ctx || layer.getContext('2d'); return _eraseObjectCtx;
+}
+
+function hasEraseStrokes() {
+  return state.erase.objectHasStrokes || state.erase.backgroundHasStrokes;
+}
+
+function isEraseInteractive() { return state.imageLoaded && state.erase.enabled; }
+
+function syncEraseControls() {
+  if (ctrlEraseSize) ctrlEraseSize.value = String(state.erase.size);
+  if (ctrlEraseBackground) ctrlEraseBackground.checked = state.erase.applyToBackground;
+  if (eraseToggleBtn) {
+    eraseToggleBtn.classList.toggle('active', state.erase.enabled);
+    eraseToggleBtn.setAttribute('aria-pressed', state.erase.enabled ? 'true' : 'false');
+    const title = state.erase.enabled ? 'Erasing enabled' : 'Enable eraser';
+    eraseToggleBtn.title = title;
+    eraseToggleBtn.setAttribute('aria-label', title);
+  }
+  syncBrushCursor();
+}
+
+function syncBrushCursor() {
+  if (!paintLayer) return;
+  const size = state.erase.enabled ? state.erase.size : state.paint.size;
+  const diameter = Math.max(8, Math.min(128, Math.round(size)));
+  const radius = diameter / 2;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${diameter}" height="${diameter}" viewBox="0 0 ${diameter} ${diameter}"><circle cx="${radius}" cy="${radius}" r="${Math.max(1, radius - 1)}" fill="none" stroke="black" stroke-width="1"/><circle cx="${radius}" cy="${radius}" r="${Math.max(0, radius - 2)}" fill="none" stroke="white" stroke-width="1"/></svg>`;
+  paintLayer.style.cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${radius} ${radius}, crosshair`;
+}
+
+function eraseLineTo(x, y) {
+  const target = state.erase.applyToBackground ? 'background' : 'objects';
+  const ctx = getEraseContext(target);
+  if (!ctx) return;
+  ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.lineWidth = state.erase.size; ctx.beginPath(); ctx.moveTo(_paintLastX, _paintLastY); ctx.lineTo(x, y); ctx.stroke(); ctx.restore();
+  _paintLastX = x; _paintLastY = y;
+  if (target === 'background') state.erase.backgroundHasStrokes = true;
+  else state.erase.objectHasStrokes = true;
+}
+
 function isPaintPanelActive() {
   return !isMobileViewport() || bottomPanel?.dataset?.panel === 'paint';
+}
+
+function isErasePanelActive() {
+  return !isMobileViewport() || bottomPanel?.dataset?.panel === 'erase';
 }
 
 function isPaintInteractive() {
@@ -2719,10 +2859,11 @@ function syncPaintControls() {
     btn.title = title;
     btn.setAttribute('aria-label', title);
   });
+  syncBrushCursor();
 }
 
 function syncPaintInteractivity() {
-  canvasContainer.classList.toggle('paint-mode', isPaintInteractive());
+  canvasContainer.classList.toggle('paint-mode', isPaintInteractive() || (isEraseInteractive() && isErasePanelActive()));
 }
 
 function clearPaintLayer({ schedule = true } = {}) {
@@ -2769,6 +2910,26 @@ function drawBaseAndPaintToContext(ctx, w, h) {
   if (paintLayer && state.paint.hasStrokes && paintLayer.width > 0 && paintLayer.height > 0) {
     ctx.drawImage(paintLayer, 0, 0, w, h);
   }
+}
+
+function applyEraseMask(ctx, w, h, target) {
+  const layer = target === 'background' ? _eraseBackgroundLayer : _eraseObjectLayer;
+  const hasStrokes = target === 'background' ? state.erase.backgroundHasStrokes : state.erase.objectHasStrokes;
+  if (!hasStrokes || !layer) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.drawImage(layer, 0, 0, w, h);
+  ctx.restore();
+}
+
+function drawPreviewObjectsWithErase(ctx, w, h, opts = {}) {
+  const objectCanvas = document.createElement('canvas');
+  objectCanvas.width = w;
+  objectCanvas.height = h;
+  const objectCtx = objectCanvas.getContext('2d');
+  drawPreviewObjectLayers(objectCtx, w, h, opts);
+  applyEraseMask(objectCtx, w, h, 'objects');
+  ctx.drawImage(objectCanvas, 0, 0);
 }
 
 function getPaintPointFromEvent(e) {
@@ -2861,6 +3022,11 @@ function showEditor() {
   state.lastStyle = null;
   state.paint.enabled = false;
   state.paint.hasStrokes = false;
+  state.erase.enabled = false;
+  state.erase.objectHasStrokes = false;
+  state.erase.backgroundHasStrokes = false;
+  _eraseObjectLayer = _eraseBackgroundLayer = null;
+  _eraseObjectCtx = _eraseBackgroundCtx = null;
   resetHistory();
   _paintMinX = Infinity;
   _paintMinY = Infinity;
@@ -2870,6 +3036,7 @@ function showEditor() {
   // Always start on the Typography tab when opening the editor
   switchPanelTab('typography');
   syncPaintControls();
+  syncEraseControls();
   syncPaintInteractivity();
   updatePanel();
   // Size image to fill available space after layout is committed
@@ -2908,12 +3075,18 @@ function showUpload(opts = {}) {
   baseImage.style.height = '';
   state.paint.enabled = false;
   state.paint.hasStrokes = false;
+  state.erase.enabled = false;
+  state.erase.objectHasStrokes = false;
+  state.erase.backgroundHasStrokes = false;
+  _eraseObjectLayer = _eraseBackgroundLayer = null;
+  _eraseObjectCtx = _eraseBackgroundCtx = null;
   if (paintLayer) {
     paintLayer.width = 1;
     paintLayer.height = 1;
   }
   _paintCtx = null;
   syncPaintControls();
+  syncEraseControls();
   syncPaintInteractivity();
   deselectAll();
   state.objects.forEach(obj => obj.destroy?.());
@@ -3654,7 +3827,8 @@ function selectField(tf) {
   state.selectedObject = tf;
   tf.select();
   syncTextFieldLayering();
-  if (shouldRefreshPreviewForSelectionChange()) {
+  updateOverlayLayering(finalPreviewEl);
+  if (shouldRefreshPreviewForSelectionChange() || hasEraseStrokes()) {
     markPreviewSourceDirty();
     scheduleImageFilterRender({ settle: true, immediate: true });
   }
@@ -3674,7 +3848,8 @@ function deselectAll() {
     state.selectedObject = null;
   }
   syncTextFieldLayering();
-  if (hadSelection && shouldRefreshPreviewForSelectionChange()) {
+  updateOverlayLayering(finalPreviewEl);
+  if (hadSelection && (shouldRefreshPreviewForSelectionChange() || hasEraseStrokes())) {
     markPreviewSourceDirty();
     scheduleImageFilterRender({ settle: true, immediate: true });
   }
@@ -4467,15 +4642,37 @@ paintToggleBtns.forEach((btn) => {
   btn.addEventListener('click', () => {
     // One-shot behavior: arm drawing until the current stroke ends.
     state.paint.enabled = true;
+    state.erase.enabled = false;
     syncPaintControls();
+    syncEraseControls();
     syncPaintInteractivity();
     deselectAll();
   });
 });
 
+eraseToggleBtn?.addEventListener('click', () => {
+  state.erase.enabled = !state.erase.enabled;
+  state.paint.enabled = false;
+  syncPaintControls();
+  syncEraseControls();
+  syncPaintInteractivity();
+  deselectAll();
+});
+ctrlEraseSize?.addEventListener('input', () => {
+  state.erase.size = Math.max(1, Math.min(128, parseInt(ctrlEraseSize.value, 10) || 24));
+});
+ctrlEraseBackground?.addEventListener('change', () => {
+  const before = captureHistoryState();
+  state.erase.applyToBackground = ctrlEraseBackground.checked;
+  pushHistoryEntry('Set erase background', before, captureHistoryState());
+  scheduleDraftSave();
+  markPreviewSourceDirty();
+  scheduleImageFilterRender({ settle: true });
+});
+
 if (paintLayer) {
   paintLayer.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !isPaintInteractive()) return;
+    if (e.button !== 0 || (!isPaintInteractive() && !isEraseInteractive())) return;
     e.preventDefault();
     e.stopPropagation();
     deselectAll();
@@ -4488,11 +4685,12 @@ if (paintLayer) {
     _paintMinY = y;
     _paintMaxX = x;
     _paintMaxY = y;
+    _eraseHistoryBefore = isEraseInteractive() ? captureHistoryState() : null;
     try {
       paintLayer.setPointerCapture(e.pointerId);
     } catch {}
-    paintLineTo(x, y);
-    state.paint.hasStrokes = true;
+    if (isEraseInteractive()) eraseLineTo(x, y);
+    else { paintLineTo(x, y); state.paint.hasStrokes = true; }
     markPreviewSourceDirty();
     scheduleImageFilterRender({ interactive: true });
   });
@@ -4502,7 +4700,7 @@ if (paintLayer) {
     e.preventDefault();
     e.stopPropagation();
     const { x, y } = getPaintPointFromEvent(e);
-    paintLineTo(x, y);
+    if (isEraseInteractive()) eraseLineTo(x, y); else paintLineTo(x, y);
     markPreviewSourceDirty();
     scheduleImageFilterRender({ interactive: true });
   });
@@ -4514,7 +4712,22 @@ if (paintLayer) {
     try {
       paintLayer.releasePointerCapture(e.pointerId);
     } catch {}
-    await endPaintStroke();
+    if (isEraseInteractive()) {
+      _paintDrawing = false;
+      _paintPointerId = null;
+      state.erase.enabled = false;
+      syncEraseControls();
+      syncPaintInteractivity();
+      if (_eraseHistoryBefore) {
+        pushHistoryEntry('Erase pixels', _eraseHistoryBefore, captureHistoryState());
+        _eraseHistoryBefore = null;
+      }
+      scheduleDraftSave();
+      markPreviewSourceDirty();
+      scheduleImageFilterRender({ settle: true });
+    } else {
+      await endPaintStroke();
+    }
   };
 
   paintLayer.addEventListener('pointerup', finishStroke);
@@ -4786,7 +4999,7 @@ function makeOverlayCanvas() {
 
 function updateOverlayLayering(el) {
   if (!el) return;
-  el.style.zIndex = state.filter.applyOnTop ? '30' : '2';
+  el.style.zIndex = state.filter.applyOnTop || hasEraseStrokes() ? '30' : '2';
 }
 
 function hideGpuPreviewOverlay() {
@@ -5237,7 +5450,8 @@ function isPixelPreviewFilter(name) {
 function syncTextFieldLayering() {
   const onTopPixelFilter = state.filter.applyOnTop && isPixelPreviewFilter(state.filter.name);
   for (const obj of state.objects) {
-    obj.el.style.zIndex = (onTopPixelFilter && state.selectedObject === obj) ? '40' : '12';
+    const selectedAbovePreview = state.selectedObject === obj && (onTopPixelFilter || hasEraseStrokes());
+    obj.el.style.zIndex = selectedAbovePreview ? '50' : '12';
   }
 }
 
@@ -5267,7 +5481,7 @@ function drawPreviewObjectLayers(ctx, w, h, opts = {}) {
   ];
   for (const tf of orderedObjects) {
     if (tf.type === 'image') {
-      if (bypassSelectedObject && isObjectFilterBypassed(tf)) continue;
+      if (bypassSelectedObject && tf === state.selectedObject) continue;
       const s = tf.style;
       const opacity = clampObjectOpacity(s.opacity ?? 1);
       const cx = tf.xPct * w;
@@ -5308,7 +5522,7 @@ function drawPreviewObjectLayers(ctx, w, h, opts = {}) {
       continue;
     }
     if (tf.type !== 'text') continue;
-    if (bypassSelectedObject && isObjectFilterBypassed(tf)) continue;
+    if (bypassSelectedObject && tf === state.selectedObject) continue;
     const s = tf.style;
     const opacity = clampObjectOpacity(s.opacity ?? 1);
     const cx = tf.xPct * w;
@@ -5754,13 +5968,35 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const previewStartTs = performance.now();
   const name = state.filter.name;
   if (name === 'none') {
-    if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+    if (!hasEraseStrokes()) {
+      if (finalPreviewEl) finalPreviewEl.style.display = 'none';
+      baseImage.style.visibility = '';
+      hideGpuPreviewOverlay();
+      return;
+    }
+    const { w, h } = computePreviewTargetSize(quality);
+    if (!finalPreviewEl) finalPreviewEl = makeOverlayCanvas();
+    updateOverlayLayering(finalPreviewEl);
+    if (finalPreviewEl.width !== w) finalPreviewEl.width = w;
+    if (finalPreviewEl.height !== h) finalPreviewEl.height = h;
+    const previewCtx = finalPreviewEl.getContext('2d');
+    previewCtx.clearRect(0, 0, w, h);
+    drawBaseAndPaintToContext(previewCtx, w, h);
+    drawPreviewObjectsWithErase(previewCtx, w, h, { bypassSelectedObject: !!state.selectedObject });
+    applyEraseMask(previewCtx, w, h, 'background');
+    // The overlay contains the composited base image. Hide the DOM image only
+    // for a background erase so transparent pixels reveal the canvas behind it.
+    baseImage.style.visibility = state.erase.backgroundHasStrokes ? 'hidden' : '';
+    finalPreviewEl.style.display = '';
+    finalPreviewEl.style.opacity = '1';
     hideGpuPreviewOverlay();
     return;
   }
 
+  baseImage.style.visibility = '';
+
   const { w, h } = computePreviewTargetSize(quality);
-  const bypassSelectedObject = state.filter.applyOnTop && !!state.selectedObject;
+  const bypassSelectedObject = (state.filter.applyOnTop || hasEraseStrokes()) && !!state.selectedObject;
   const t = state.filter.intensity / 100;
 
   ensureVaporSrcContext();
@@ -5773,7 +6009,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   let sourceBuildMs = 0;
   let sourceCopyMs = 0;
   let sourceCacheHit = false;
-  const canGpu = canUseGpuPreview(name, quality);
+  const canGpu = !hasEraseStrokes() && canUseGpuPreview(name, quality);
   if (canGpu) {
     if (!previewGpuSourceCache.dirty &&
         previewGpuSourceCache.w === w &&
@@ -5785,7 +6021,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
       vaporSrcCtx.clearRect(0, 0, w, h);
       drawBaseAndPaintToContext(vaporSrcCtx, w, h);
       if (state.filter.applyOnTop) {
-        drawPreviewObjectLayers(vaporSrcCtx, w, h, { bypassSelectedObject });
+        drawPreviewObjectsWithErase(vaporSrcCtx, w, h, { bypassSelectedObject });
       }
       sourceBuildMs = performance.now() - sourceBuildStart;
       previewGpuSourceCache.w = w;
@@ -5844,7 +6080,7 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
     vaporSrcCtx.clearRect(0, 0, w, h);
     drawBaseAndPaintToContext(vaporSrcCtx, w, h);
     if (state.filter.applyOnTop) {
-      drawPreviewObjectLayers(vaporSrcCtx, w, h, { bypassSelectedObject });
+      drawPreviewObjectsWithErase(vaporSrcCtx, w, h, { bypassSelectedObject });
     }
     previewData = vaporSrcCtx.getImageData(0, 0, w, h);
     sourceBuildMs = performance.now() - sourceBuildStart;
@@ -5896,6 +6132,11 @@ async function updateFinalFilterPreviewOverlay(renderSeq, quality = 'settle') {
   const commitStartTs = performance.now();
   const pc = finalPreviewEl.getContext('2d');
   pc.putImageData(previewData, 0, 0);
+  if (!state.filter.applyOnTop) {
+    drawPreviewObjectsWithErase(pc, w, h, { bypassSelectedObject });
+  }
+  applyEraseMask(pc, w, h, 'background');
+  baseImage.style.visibility = state.erase.backgroundHasStrokes ? 'hidden' : '';
   // Keep GPU interactive preview visible until settle pixels are committed,
   // then swap overlays to avoid a flash back to the unfiltered base image.
   hideGpuPreviewOverlay();
@@ -6655,8 +6896,14 @@ async function renderCurrentImageBlob(options = {}) {
     }
   }
 
+  const objectCanvas = document.createElement('canvas');
+  objectCanvas.width = nw;
+  objectCanvas.height = nh;
+  const objectCtx = objectCanvas.getContext('2d', { willReadFrequently: true });
   const textStartTs = performance.now();
-  drawObjectLayersForExport(ctx, nw, nh, scale);
+  drawObjectLayersForExport(objectCtx, nw, nh, scale);
+  applyEraseMask(objectCtx, nw, nh, 'objects');
+  ctx.drawImage(objectCanvas, 0, 0);
   textMs += performance.now() - textStartTs;
 
   if (state.filter.applyOnTop) {
@@ -6669,11 +6916,14 @@ async function renderCurrentImageBlob(options = {}) {
     }
   }
 
+  applyEraseMask(ctx, nw, nh, 'background');
+
   const blobStartTs = performance.now();
+  const outputMime = 'image/png';
   const blob = await new Promise(resolve =>
-    exportCanvas.toBlob(resolve, mime, quality)
+    exportCanvas.toBlob(resolve, outputMime, quality)
   );
-  if (!blob) throw new Error(`Failed to render ${mime} image`);
+  if (!blob) throw new Error(`Failed to render ${outputMime} image`);
   const endTs = performance.now();
   recordExportPerf({
     filter: state.filter.name,
@@ -6691,9 +6941,9 @@ async function renderCurrentImageBlob(options = {}) {
 }
 
 async function exportImage() {
-  const blob = await renderCurrentImageBlob({ mime: 'image/jpeg', quality: 0.93 });
-  const mime = 'image/jpeg';
-  const ext = 'jpg';
+  const blob = await renderCurrentImageBlob({ mime: 'image/png' });
+  const mime = 'image/png';
+  const ext = 'png';
 
   // Platform detection.
   // maxTouchPoints > 0 would catch Mac trackpads on newer macOS too, so be specific.
@@ -7266,15 +7516,6 @@ window.addEventListener('pagehide', () => {
 window.addEventListener('pageshow', () => {
   if (document.visibilityState !== 'hidden') {
     void handleAppBecameVisible();
-  }
-});
-
-// ─── Prevent accidental back/navigation ──────────────────────────────────────
-
-window.addEventListener('beforeunload', (e) => {
-  if (state.imageLoaded && state.objects.length > 0) {
-    e.preventDefault();
-    e.returnValue = '';
   }
 });
 
