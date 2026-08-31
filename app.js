@@ -2437,15 +2437,21 @@ function setUploadBusy(isBusy, message = 'Loading image...') {
   uploadStatusText.textContent = message;
 }
 
-function loadImgFromBlob(blob) {
+function loadImgFromBlob(blob, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const img = new Image();
+    const timer = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Image decode timed out'));
+    }, timeoutMs);
     img.onload = () => {
+      clearTimeout(timer);
       URL.revokeObjectURL(url);
       resolve(img);
     };
     img.onerror = () => {
+      clearTimeout(timer);
       URL.revokeObjectURL(url);
       reject(new Error('Image decode failed'));
     };
@@ -2520,14 +2526,18 @@ async function normalizeUploadImage(file) {
   let inputBlob = file;
   let convertedFromHeic = false;
 
-  const directlyDecodable = await canDecodeBlob(file);
-  if (!directlyDecodable) {
-    if (!isHeicLikeFile(file)) {
-      throw new Error('This image format is not supported by your browser.');
-    }
+  // iOS photo pickers commonly provide HEIC. Some WebKit versions neither
+  // resolve nor reject a blob-image decode for it, so route it straight to a
+  // converter instead of waiting for a browser decode that may never settle.
+  if (isHeicLikeFile(file)) {
     setUploadBusy(true, 'Converting image...');
     inputBlob = await convertHeicToJpeg(file);
     convertedFromHeic = true;
+  } else {
+    const directlyDecodable = await canDecodeBlob(file);
+    if (!directlyDecodable) {
+      throw new Error('This image format is not supported by your browser.');
+    }
   }
 
   const inputType = (inputBlob.type || '').toLowerCase();
