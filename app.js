@@ -41,6 +41,8 @@ let _draftSaveTimer = 0;
 let _draftSaveQueued = false;
 let _draftSaveInFlight = false;
 let _draftRestoreInProgress = false;
+let _availableDraft = null;
+let _draftPreviewUrl = null;
 
 const HISTORY_LIMIT = 100;
 const history = {
@@ -1783,6 +1785,10 @@ const alignBtns        = document.querySelectorAll('.align-btn');
 const presetBtns       = document.querySelectorAll('.preset-chip');
 const uploadStatus     = document.getElementById('upload-status');
 const uploadStatusText = document.getElementById('upload-status-text');
+const draftCard         = document.getElementById('draft-card');
+const draftPreview      = document.getElementById('draft-preview');
+const openDraftBtn      = document.getElementById('open-draft-btn');
+const discardDraftBtn   = document.getElementById('discard-draft-btn');
 const DEFAULT_SIZE_MIN = parseFloat(ctrlSize?.min || '1');
 const DEFAULT_SIZE_MAX = parseFloat(ctrlSize?.max || '25');
 
@@ -2316,17 +2322,42 @@ async function restoreDraftSession(draft) {
 async function maybeRestoreDraftSession() {
   const draft = await readDraftRecord();
   if (!draft?.imageBlob) return;
-  const shouldRestore = confirm('Restore your last draft? Press Cancel to discard it.');
-  if (!shouldRestore) {
-    await discardDraftSession();
-    return;
-  }
-  const restored = await restoreDraftSession(draft);
-  if (!restored) {
-    await discardDraftSession();
-    showHintMessage('Draft restore failed');
+  _availableDraft = draft;
+  if (_draftPreviewUrl) URL.revokeObjectURL(_draftPreviewUrl);
+  _draftPreviewUrl = URL.createObjectURL(draft.imageBlob);
+  draftPreview.src = _draftPreviewUrl;
+  draftCard.classList.remove('hidden');
+}
+
+function hideDraftCard() {
+  _availableDraft = null;
+  draftCard?.classList.add('hidden');
+  draftPreview?.removeAttribute('src');
+  if (_draftPreviewUrl) {
+    URL.revokeObjectURL(_draftPreviewUrl);
+    _draftPreviewUrl = null;
   }
 }
+
+openDraftBtn?.addEventListener('click', async () => {
+  if (!_availableDraft || state.uploadBusy) return;
+  setUploadBusy(true, 'Opening current project...');
+  const restored = await restoreDraftSession(_availableDraft);
+  if (restored) {
+    hideDraftCard();
+    return;
+  }
+  setUploadBusy(false);
+  await discardDraftSession();
+  hideDraftCard();
+  alert('Could not open the saved project. It has been discarded.');
+});
+
+discardDraftBtn?.addEventListener('click', async () => {
+  if (state.uploadBusy) return;
+  await discardDraftSession();
+  hideDraftCard();
+});
 
 // ─── Image loading ─────────────────────────────────────────────────────────────
 

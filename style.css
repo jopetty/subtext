@@ -447,6 +447,67 @@ html, body {
   font-style: italic;
 }
 
+.draft-card {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 1.5rem auto 0;
+  padding: 0.55rem;
+  max-width: 310px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 92%, var(--accent));
+}
+
+.draft-preview {
+  width: 62px;
+  height: 62px;
+  flex: none;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--border);
+}
+
+.draft-card-copy {
+  min-width: 0;
+}
+
+.draft-card-title {
+  margin: 0 0 0.35rem;
+  color: var(--ink-muted);
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.draft-open-btn,
+.draft-discard-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.draft-open-btn {
+  font-weight: 700;
+}
+
+.draft-discard-btn {
+  margin-left: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.draft-open-btn:hover,
+.draft-open-btn:focus-visible,
+.draft-discard-btn:hover,
+.draft-discard-btn:focus-visible {
+  text-decoration: underline;
+}
+
 .upload-status {
   margin-top: 0.8rem;
   font-size: 0.82rem;
