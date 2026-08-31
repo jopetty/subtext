@@ -364,6 +364,10 @@
 }
 
 @media (max-width: 769px) {
+  .paste-upload-btn {
+    display: inline-flex;
+  }
+
   :root {
     --mobile-chip-scroll-inset: 0.85rem;
   }
@@ -458,6 +462,29 @@ html, body {
   transition: background 0.15s;
   border: none;
 }
+
+.upload-actions {
+  display: inline-flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.paste-upload-btn {
+  display: none;
+  padding: 0.75rem 2rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.paste-upload-btn:hover { background: #5a4430; }
 
 .upload-btn:hover {
   background: #5a4430;

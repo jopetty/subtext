@@ -1815,6 +1815,7 @@ function confirmReplaceCanvasAndPickFile() {
 const uploadScreen   = document.getElementById('upload-screen');
 const editorScreen   = document.getElementById('editor-screen');
 const fileInput      = document.getElementById('file-input');
+const pasteUploadBtn = document.getElementById('paste-upload-btn');
 const addObjectInput = document.getElementById('add-object-input');
 const addObjectBtns  = document.querySelectorAll('.add-object-btn');
 const backBtn        = document.getElementById('back-btn');
@@ -3147,6 +3148,36 @@ function showUpload(opts = {}) {
 
 fileInput.addEventListener('change', (e) => {
   loadImageFile(e.target.files[0]);
+});
+
+async function pasteImageFromClipboard() {
+  if (state.uploadBusy) return;
+  if (!window.isSecureContext || !navigator.clipboard?.read) {
+    showHintMessage('Paste requires HTTPS or localhost.');
+    return;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const imageType = item.types.find((type) => type.startsWith('image/'));
+      if (!imageType) continue;
+      const blob = await item.getType(imageType);
+      const extension = imageType.split('/')[1] || 'png';
+      loadImageFile(new File([blob], `pasted-image.${extension}`, { type: imageType }));
+      return;
+    }
+    showHintMessage('No image found in the clipboard.');
+  } catch (err) {
+    if (err?.name === 'NotAllowedError') {
+      showHintMessage('Clipboard access was not allowed.');
+    } else {
+      showHintMessage('Could not paste an image.');
+    }
+  }
+}
+
+pasteUploadBtn?.addEventListener('click', () => {
+  void pasteImageFromClipboard();
 });
 
 if (addObjectBtns.length && addObjectInput) {
