@@ -233,6 +233,19 @@ function recordExportPerf(sample) {
 
 // Preset styles
 const PRESETS = {
+  normie: {
+    font:         "var(--font-helvetica)",
+    size:         5,   // percent of image width
+    lineHeight:   1.2,
+    rotateDeg:    0,
+    weight:       '400',
+    italic:       false,
+    align:        'center',
+    fgColor:      '#000000',
+    outlineColor: '#000000',
+    outlineWidth: 0,
+    blur:         0,
+  },
   classic: {
     font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
@@ -361,6 +374,57 @@ const MEXICO_COEFS = [
 //   cssPreview(t)         → optional CSS approximation (debug/reference only)
 //   apply(data, w, h, t)  → pixel-level function used during canvas export
 const FILTERS = {
+  blur: {
+    label: 'Blur',
+    // Three separable box blurs approximate a Gaussian in O(pixels), which
+    // keeps full-resolution export practical and also runs in the filter worker.
+    apply(data, w, h, t, _params, pixelScale = 1, scratch) {
+      if (t <= 0 || w <= 0 || h <= 0) return;
+      const r = Math.max(1, Math.round(t * 8 * pixelScale));
+      const diam = 2 * r + 1;
+      const tmp = scratch.orig;
+
+      for (let pass = 0; pass < 3; pass++) {
+        for (let y = 0; y < h; y++) {
+          const row = y * w * 4;
+          let rr = 0, gg = 0, bb = 0, aa = 0;
+          for (let kx = -r; kx <= r; kx++) {
+            const i = row + Math.max(0, kx) * 4;
+            rr += data[i]; gg += data[i + 1]; bb += data[i + 2]; aa += data[i + 3];
+          }
+          for (let x = 0; x < w; x++) {
+            const i = row + x * 4;
+            tmp[i] = rr / diam; tmp[i + 1] = gg / diam;
+            tmp[i + 2] = bb / diam; tmp[i + 3] = aa / diam;
+            const left = row + Math.max(0, x - r) * 4;
+            const right = row + Math.min(w - 1, x + r + 1) * 4;
+            rr += data[right] - data[left]; gg += data[right + 1] - data[left + 1];
+            bb += data[right + 2] - data[left + 2]; aa += data[right + 3] - data[left + 3];
+          }
+        }
+        data.set(tmp);
+
+        for (let x = 0; x < w; x++) {
+          const col = x * 4;
+          let rr = 0, gg = 0, bb = 0, aa = 0;
+          for (let ky = -r; ky <= r; ky++) {
+            const i = Math.max(0, ky) * w * 4 + col;
+            rr += data[i]; gg += data[i + 1]; bb += data[i + 2]; aa += data[i + 3];
+          }
+          for (let y = 0; y < h; y++) {
+            const i = y * w * 4 + col;
+            tmp[i] = rr / diam; tmp[i + 1] = gg / diam;
+            tmp[i + 2] = bb / diam; tmp[i + 3] = aa / diam;
+            const top = Math.max(0, y - r) * w * 4 + col;
+            const bottom = Math.min(h - 1, y + r + 1) * w * 4 + col;
+            rr += data[bottom] - data[top]; gg += data[bottom + 1] - data[top + 1];
+            bb += data[bottom + 2] - data[top + 2]; aa += data[bottom + 3] - data[top + 3];
+          }
+        }
+        data.set(tmp);
+      }
+    },
+  },
   film: {
     label: '35mm',
     cssPreview: (t) =>
@@ -1520,6 +1584,7 @@ const FILTERS = {
 
 // Default values for vibe-specific extra params
 const FILTER_PARAM_DEFAULTS = {
+  blur:        {},
   film:        { grain: 10 },
   redshift:    {},
   dithering:   { mono: 0, fgColor: '#231815', bgColor: '#f5f2e6' },
@@ -4277,7 +4342,7 @@ function renderFilteredPreviewToContrastCanvas() {
 
   if (name !== 'none') {
     const px = ctx.getImageData(0, 0, w, h);
-    FILTERS[name].apply(px.data, w, h, t, state.filter.params);
+    FILTERS[name].apply(px.data, w, h, t, state.filter.params, 1, getFilterScratch(name, px.data.length));
     ctx.putImageData(px, 0, 0);
   }
   return { ctx, w, h };
@@ -5806,8 +5871,8 @@ let _previewRenderInFlight = false;
 let _previewRenderPending = false;
 let _previewThrottleTimer = 0;
 let _lastPreviewRenderTs = 0;
-const INTERACTIVE_HEAVY_FILTERS = new Set(['dithering']);
-const INTERACTIVE_WORKER_FILTERS = new Set(['dithering']);
+const INTERACTIVE_HEAVY_FILTERS = new Set(['blur', 'dithering']);
+const INTERACTIVE_WORKER_FILTERS = new Set(['blur', 'dithering']);
 
 function computePreviewTargetSize(quality = 'settle') {
   const renderedW = Math.max(1, baseImage.offsetWidth || 1);
@@ -6516,7 +6581,7 @@ function softBlur(ctx, w, h, radius) {
 async function applyActiveFilterToContext(ctx, w, h, pixelScale) {
   if (state.filter.name === 'none') return;
   const imgData = ctx.getImageData(0, 0, w, h);
-  const scaleForFilter = (state.filter.name === 'vaporwave' || state.filter.name === 'hegseth' || state.filter.name === 'dithering' || state.filter.name === 'pixelArt' || state.filter.name === 'hyperpop') ? pixelScale : 1;
+  const scaleForFilter = (state.filter.name === 'blur' || state.filter.name === 'vaporwave' || state.filter.name === 'hegseth' || state.filter.name === 'dithering' || state.filter.name === 'pixelArt' || state.filter.name === 'hyperpop') ? pixelScale : 1;
   const result = await runFilterInWorker(
     state.filter.name,
     imgData,
