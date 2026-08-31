@@ -1234,7 +1234,7 @@ html, body {
   color: #fff;
 }
 
-.erase-toggle-btn {
+.section-heading-row .erase-toggle-btn {
   width: 28px;
   min-width: 28px;
   height: 28px;

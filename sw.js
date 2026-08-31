@@ -1,18 +1,18 @@
 'use strict';
 
-const CACHE_VERSION = 'subtext-v382122d5ca';
+const CACHE_VERSION = 'subtext-vdd2aeb1d73';
 const CORE_ASSETS = [
   '/',
   '/index.html',
-  '/style.css?v=382122d5ca',
-  '/app.js?v=382122d5ca',
+  '/style.css?v=dd2aeb1d73',
+  '/app.js?v=dd2aeb1d73',
   '/core/clipboard.js',
   '/core/draft-store.js',
   '/core/history.js',
   '/core/image-files.js',
   '/core/snapping.js',
   '/core/stats.js',
-  '/manifest.webmanifest?v=382122d5ca',
+  '/manifest.webmanifest?v=dd2aeb1d73',
   '/favicon-16.png',
   '/favicon-32.png',
   '/apple-touch-icon.png',
