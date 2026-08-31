@@ -100,3 +100,36 @@ test('saved project is restored from the page and Back keeps it available', asyn
   await expect(page.locator('#draft-card')).toBeVisible();
   expect(dialogCount).toBe(0);
 });
+
+test('Blur is undoable, redoable, and included in an export', async ({ page }) => {
+  await uploadImage(page);
+  const blur = page.locator('.vibe-chip[data-filter="blur"]');
+  await blur.click();
+  await expect(blur).toHaveClass(/active/);
+
+  await page.locator('#top-bar').click();
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('.vibe-chip[data-filter="none"]')).toHaveClass(/active/);
+  await page.keyboard.press('Control+Shift+z');
+  await expect(blur).toHaveClass(/active/);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.click('#export-btn');
+  await downloadPromise;
+});
+
+test('adding an image object and painting both create editable objects', async ({ page }) => {
+  await uploadImage(page);
+  await page.setInputFiles('#add-object-input', SAMPLE_IMAGE);
+  await expect(page.locator('.image-object')).toHaveCount(1);
+
+  await page.locator('.paint-toggle-btn--desktop').click();
+  const paintLayer = page.locator('#paint-layer');
+  const box = await paintLayer.boundingBox();
+  if (!box) throw new Error('Paint layer has no bounding box');
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.25);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.55);
+  await page.mouse.up();
+  await expect(page.locator('.image-object')).toHaveCount(2);
+});

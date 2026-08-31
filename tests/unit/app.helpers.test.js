@@ -6,6 +6,7 @@ import {
   isSvgLikeFile,
 } from '../../core/image-files.js';
 import { getClipboardWritePermissionState, isIOSLikePlatform } from '../../core/clipboard.js';
+import { createHistory, historySnapshotDigest } from '../../core/history.js';
 import {
   getRotationSnapAxis,
   snapAxis,
@@ -78,5 +79,26 @@ describe('core helpers', () => {
     expect(snapRotationDeg(370, 360)).toEqual({ deg: 370, snap: null });
     expect(getRotationSnapAxis(-45)).toBe('d2');
     expect(getRotationSnapAxis(90)).toBe('y');
+  });
+
+  it('records meaningful history entries, clears redo, and respects its limit', () => {
+    const history = createHistory({ limit: 2 });
+    const first = { value: 1, selectedIndex: 0 };
+    const second = { value: 2, selectedIndex: 4 };
+    expect(history.push('No-op selection', first, { value: 1, selectedIndex: 3 })).toBe(false);
+    expect(history.push('First', first, second)).toBe(true);
+    history.redoStack.push({ label: 'stale' });
+    history.push('Second', second, { value: 3 });
+    history.push('Third', { value: 3 }, { value: 4 });
+    expect(history.undoStack.map((entry) => entry.label)).toEqual(['Second', 'Third']);
+    expect(history.redoStack).toEqual([]);
+  });
+
+  it('groups a pending history action into one entry', () => {
+    const history = createHistory();
+    expect(history.begin('Adjust', { value: 1 })).toBe(true);
+    expect(history.commit(() => ({ value: 2 }))).toBe(true);
+    expect(history.undoStack).toHaveLength(1);
+    expect(historySnapshotDigest({ value: 1, selectedIndex: 1 })).toBe(historySnapshotDigest({ value: 1, selectedIndex: 8 }));
   });
 });

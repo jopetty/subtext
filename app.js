@@ -18,6 +18,8 @@ import {
   snapRotationDeg,
 } from './core/snapping.js';
 import { getClipboardWritePermissionState, isIOSLikePlatform } from './core/clipboard.js';
+import { createDraftStore } from './core/draft-store.js';
+import { createHistory } from './core/history.js';
 import { percentile } from './core/stats.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -44,14 +46,9 @@ const state = {
   },
 };
 
-const DRAFT_DB_NAME = 'subtext-drafts';
-const DRAFT_DB_VERSION = 1;
-const DRAFT_STORE_NAME = 'drafts';
-const DRAFT_KEY = 'latest';
 const DRAFT_SAVE_DEBOUNCE_MS = 450;
 const DRAFT_SCHEMA_VERSION = 1;
 
-let _draftDbPromise = null;
 let _draftSaveTimer = 0;
 let _draftSaveQueued = false;
 let _draftSaveInFlight = false;
@@ -59,13 +56,8 @@ let _draftRestoreInProgress = false;
 let _availableDraft = null;
 let _draftPreviewUrl = null;
 
-const HISTORY_LIMIT = 100;
-const history = {
-  undoStack: [],
-  redoStack: [],
-  applying: false,
-  pending: null,
-};
+const draftStore = createDraftStore();
+const history = createHistory();
 
 const PERF_MAX_SAMPLES = 200;
 const perf = {
@@ -1907,72 +1899,9 @@ if (baseImage) {
   baseImage.addEventListener('dragstart', (e) => e.preventDefault());
 }
 
-function openDraftDb() {
-  if (!('indexedDB' in window)) return Promise.resolve(null);
-  if (_draftDbPromise) return _draftDbPromise;
-  _draftDbPromise = new Promise((resolve) => {
-    try {
-      const req = indexedDB.open(DRAFT_DB_NAME, DRAFT_DB_VERSION);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(DRAFT_STORE_NAME)) {
-          db.createObjectStore(DRAFT_STORE_NAME);
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-  return _draftDbPromise;
-}
-
-async function readDraftRecord() {
-  const db = await openDraftDb();
-  if (!db) return null;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(DRAFT_STORE_NAME, 'readonly');
-      const store = tx.objectStore(DRAFT_STORE_NAME);
-      const req = store.get(DRAFT_KEY);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-async function writeDraftRecord(record) {
-  const db = await openDraftDb();
-  if (!db) return false;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(DRAFT_STORE_NAME, 'readwrite');
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-      tx.objectStore(DRAFT_STORE_NAME).put(record, DRAFT_KEY);
-    } catch {
-      resolve(false);
-    }
-  });
-}
-
-async function clearDraftRecord() {
-  const db = await openDraftDb();
-  if (!db) return false;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(DRAFT_STORE_NAME, 'readwrite');
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-      tx.objectStore(DRAFT_STORE_NAME).delete(DRAFT_KEY);
-    } catch {
-      resolve(false);
-    }
-  });
-}
+const readDraftRecord = () => draftStore.read();
+const writeDraftRecord = (record) => draftStore.write(record);
+const clearDraftRecord = () => draftStore.clear();
 
 function canvasToBlob(canvas, type = 'image/png', quality) {
   return new Promise((resolve) => {
@@ -2167,52 +2096,25 @@ function captureHistoryState() {
   };
 }
 
-function historySnapshotDigest(snapshot) {
-  if (!snapshot) return '';
-  return JSON.stringify(snapshot, (key, value) => {
-    if (key === 'selectedIndex') return undefined;
-    if (value instanceof Blob) {
-      return { __blob: true, size: value.size, type: value.type };
-    }
-    return value;
-  });
-}
-
 function resetHistory() {
-  history.undoStack = [];
-  history.redoStack = [];
-  history.pending = null;
+  history.reset();
 }
 
 function pushHistoryEntry(label, before, after) {
-  if (history.applying) return;
-  if (!before || !after) return;
-  if (historySnapshotDigest(before) === historySnapshotDigest(after)) return;
-  history.undoStack.push({ label, before, after });
-  if (history.undoStack.length > HISTORY_LIMIT) history.undoStack.shift();
-  history.redoStack = [];
-  history.pending = null;
+  history.push(label, before, after);
 }
 
 function beginHistoryAction(label) {
-  if (history.applying || !state.imageLoaded) return;
-  if (history.pending) return;
-  history.pending = {
-    label,
-    before: captureHistoryState(),
-  };
+  if (!state.imageLoaded) return;
+  history.begin(label, captureHistoryState());
 }
 
 function commitHistoryAction(label = history.pending?.label) {
-  if (!history.pending || history.applying) return;
-  const before = history.pending.before;
-  const after = captureHistoryState();
-  history.pending = null;
-  pushHistoryEntry(label || 'Edit', before, after);
+  history.commit(captureHistoryState, label);
 }
 
 function cancelHistoryAction() {
-  history.pending = null;
+  history.cancel();
 }
 
 async function restorePaintLayerFromDataUrl(dataUrl) {
