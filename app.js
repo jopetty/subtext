@@ -5,6 +5,21 @@
 
 'use strict';
 
+import {
+  extractFirstImageFile,
+  isHeicLikeFile,
+  isLikelyImageFile,
+  isSvgLikeFile,
+} from './core/image-files.js';
+import {
+  GUIDE_POSITIONS,
+  getRotationSnapAxis,
+  snapAxis,
+  snapRotationDeg,
+} from './core/snapping.js';
+import { getClipboardWritePermissionState, isIOSLikePlatform } from './core/clipboard.js';
+import { percentile } from './core/stats.js';
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const state = {
@@ -82,13 +97,6 @@ const perf = {
 function pushPerfSample(arr, sample) {
   arr.push(sample);
   if (arr.length > PERF_MAX_SAMPLES) arr.shift();
-}
-
-function percentile(values, p) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
-  return sorted[idx];
 }
 
 function calcPreviewFps() {
@@ -2442,43 +2450,6 @@ discardDraftBtn?.addEventListener('click', async () => {
 
 // ─── Image loading ─────────────────────────────────────────────────────────────
 
-const HEIC_MIME_RE = /^image\/hei(c|f|x|s)$/i;
-const HEIC_EXT_RE  = /\.(hei(c|f|x|s))$/i;
-const SVG_MIME_RE  = /^image\/svg\+xml$/i;
-const SVG_EXT_RE   = /\.svg$/i;
-const IMAGE_EXT_RE = /\.(avif|bmp|gif|heic|heif|heix|heis|jpg|jpeg|jpe|jfif|png|svg|tif|tiff|webp)$/i;
-
-function isHeicLikeFile(file) {
-  const name = file?.name || '';
-  const type = file?.type || '';
-  return HEIC_MIME_RE.test(type) || HEIC_EXT_RE.test(name);
-}
-
-function isLikelyImageFile(file) {
-  if (!file) return false;
-  const type = (file.type || '').toLowerCase();
-  const name = file.name || '';
-  return type.startsWith('image/') || IMAGE_EXT_RE.test(name);
-}
-
-function isSvgLikeFile(file) {
-  if (!file) return false;
-  const type = (file.type || '').toLowerCase();
-  const name = file.name || '';
-  return SVG_MIME_RE.test(type) || SVG_EXT_RE.test(name);
-}
-
-function extractFirstImageFile(transfer) {
-  let file = transfer?.files?.[0] || null;
-  if (file && isLikelyImageFile(file)) return file;
-  if (!transfer?.items) return null;
-  for (const item of transfer.items) {
-    const candidate = item.getAsFile?.();
-    if (candidate && isLikelyImageFile(candidate)) return candidate;
-  }
-  return null;
-}
-
 function setUploadBusy(isBusy, message = 'Loading image...') {
   state.uploadBusy = isBusy;
   fileInput.disabled = isBusy;
@@ -3854,14 +3825,6 @@ canvasContainer.addEventListener('pointerdown', (e) => {
 
 // ─── Snap guides ──────────────────────────────────────────────────────────────
 
-const GUIDE_POSITIONS = [1 / 3, 1 / 2, 2 / 3];
-// Hysteresis thresholds (as fraction of image dimension)
-const SNAP_IN  = 0.021; // snap when raw position comes within this distance
-const SNAP_OUT = 0.038; // unsnap when dragged this far past the guide
-const ROTATE_SNAP_GUIDES = [0, 45, 90, 135, 180, 225, 270, 315];
-const ROTATE_SNAP_IN_DEG = 4;
-const ROTATE_SNAP_OUT_DEG = 9;
-
 const guideVEls = []; // vertical lines (x positions)
 const guideHEls = []; // horizontal lines (y positions)
 let rotateGuideVEl = null;
@@ -3930,68 +3893,6 @@ function showRotateGuides(visible, centerXPct = 0.5, centerYPct = 0.5, snapAxis 
   rotateGuideHEl.classList.toggle('snapped', visible && snapAxis === 'x');
   rotateGuideD1El.classList.toggle('snapped', visible && snapAxis === 'd1');
   rotateGuideD2El.classList.toggle('snapped', visible && snapAxis === 'd2');
-}
-
-// Apply sticky snapping to one axis.
-// raw: the raw 0–1 position; currentSnap: the guide we're currently locked to (or null).
-// Returns { pos, snap } — the snapped position and new snap state.
-function snapAxis(raw, currentSnap) {
-  // Hysteresis: harder to leave a snapped guide than to enter one
-  if (currentSnap !== null && Math.abs(raw - currentSnap) > SNAP_OUT) {
-    currentSnap = null;
-  }
-  if (currentSnap === null) {
-    for (const g of GUIDE_POSITIONS) {
-      if (Math.abs(raw - g) < SNAP_IN) {
-        currentSnap = g;
-        break;
-      }
-    }
-  }
-  return { pos: currentSnap !== null ? currentSnap : raw, snap: currentSnap };
-}
-
-function getNearestRotationGuide(rawDeg, targetDeg) {
-  const turns = Math.round((rawDeg - targetDeg) / 360);
-  return targetDeg + turns * 360;
-}
-
-function snapRotationDeg(rawDeg, currentSnapDeg) {
-  if (currentSnapDeg !== null && Math.abs(rawDeg - currentSnapDeg) > ROTATE_SNAP_OUT_DEG) {
-    currentSnapDeg = null;
-  }
-  if (currentSnapDeg === null) {
-    let best = null;
-    let bestDist = Infinity;
-    for (const target of ROTATE_SNAP_GUIDES) {
-      const candidate = getNearestRotationGuide(rawDeg, target);
-      const dist = Math.abs(rawDeg - candidate);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = candidate;
-      }
-    }
-    if (best !== null && bestDist <= ROTATE_SNAP_IN_DEG) {
-      currentSnapDeg = best;
-    }
-  }
-  return { deg: currentSnapDeg !== null ? currentSnapDeg : rawDeg, snap: currentSnapDeg };
-}
-
-function normalizeDeg0To360(deg) {
-  let v = deg % 360;
-  if (v < 0) v += 360;
-  return v;
-}
-
-function getRotationSnapAxis(snapDeg) {
-  if (snapDeg === null || snapDeg === undefined) return null;
-  const normalized = normalizeDeg0To360(snapDeg);
-  const snappedIndex = Math.round(normalized / 45) % 8;
-  if (snappedIndex === 0 || snappedIndex === 4) return 'x';   // 0, 180
-  if (snappedIndex === 2 || snappedIndex === 6) return 'y';   // 90, 270
-  if (snappedIndex === 1 || snappedIndex === 5) return 'd1';  // 45, 225
-  return 'd2'; // 135, 315
 }
 
 // ─── Drag to move ─────────────────────────────────────────────────────────────
@@ -6957,23 +6858,6 @@ async function copyImageToClipboard() {
     }
   }
   throw lastError || new Error('Clipboard image copy failed.');
-}
-
-async function getClipboardWritePermissionState() {
-  if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
-    return 'unknown';
-  }
-  try {
-    const result = await navigator.permissions.query({ name: 'clipboard-write' });
-    return result?.state || 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
-
-function isIOSLikePlatform() {
-  return /iP(ad|hone|od)/i.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 async function refreshCopyActionAvailability() {

@@ -4,6 +4,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
+const CORE_MODULES = [
+  'core/clipboard.js',
+  'core/image-files.js',
+  'core/snapping.js',
+  'core/stats.js',
+];
 
 function read(rel) {
   return readFileSync(resolve(root, rel), 'utf8');
@@ -14,7 +20,7 @@ function write(rel, content) {
 }
 
 const hash = createHash('sha256');
-for (const rel of ['app.js', 'style.css', 'manifest.webmanifest']) {
+for (const rel of ['app.js', 'style.css', 'manifest.webmanifest', ...CORE_MODULES]) {
   hash.update(read(rel));
 }
 const rev = hash.digest('hex').slice(0, 10);

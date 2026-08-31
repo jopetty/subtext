@@ -10,6 +10,39 @@ async function uploadImage(page) {
   await expect(page.locator('#base-image')).toBeVisible();
 }
 
+async function seedDraft(page) {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    const imageBlob = await fetch('/icon-192.png').then((response) => response.blob());
+    await new Promise((resolve, reject) => {
+      const deleteRequest = indexedDB.deleteDatabase('subtext-drafts');
+      deleteRequest.onsuccess = resolve;
+      deleteRequest.onerror = () => reject(deleteRequest.error);
+      deleteRequest.onblocked = resolve;
+    });
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.open('subtext-drafts', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('drafts');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const tx = request.result.transaction('drafts', 'readwrite');
+        tx.objectStore('drafts').put({
+          schemaVersion: 1,
+          imageBlob,
+          filter: { name: 'none', intensity: 75, params: {}, applyOnTop: false },
+          objects: [],
+          paint: { color: '#ff3b30', size: 8, hasStrokes: false, blob: null },
+          lastStyle: null,
+          lastPreset: 'classic',
+        }, 'latest');
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+  });
+  await page.reload();
+}
+
 test('upload and add caption text field', async ({ page }) => {
   await uploadImage(page);
 
@@ -50,4 +83,20 @@ test('deep links fall back to the app shell', async ({ page }) => {
   await page.goto('/fdsa');
   await expect(page.locator('#upload-screen')).toHaveClass(/active/);
   await expect(page.locator('.wordmark')).toContainText('Subtext');
+});
+
+test('saved project is restored from the page and Back keeps it available', async ({ page }) => {
+  let dialogCount = 0;
+  page.on('dialog', () => { dialogCount += 1; });
+  await seedDraft(page);
+
+  await expect(page.locator('#draft-card')).toBeVisible();
+  await expect(page.locator('#draft-preview')).toBeVisible();
+  await page.click('#open-draft-btn');
+  await expect(page.locator('#editor-screen')).toHaveClass(/active/);
+
+  await page.click('#back-btn');
+  await expect(page.locator('#upload-screen')).toHaveClass(/active/);
+  await expect(page.locator('#draft-card')).toBeVisible();
+  expect(dialogCount).toBe(0);
 });
