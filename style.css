@@ -363,11 +363,7 @@
   --font-nunito: 'Nunito', 'Saira', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
 }
 
-@media (max-width: 769px), (pointer: coarse) {
-  .paste-upload-btn {
-    display: inline-flex;
-  }
-
+@media (max-width: 769px) {
   :root {
     --mobile-chip-scroll-inset: 0.85rem;
   }
@@ -482,9 +478,17 @@ html, body {
   letter-spacing: 0.03em;
   cursor: pointer;
   transition: background 0.15s;
+  align-items: center;
+  justify-content: center;
 }
 
 .paste-upload-btn:hover { background: #5a4430; }
+
+@media (max-width: 769px), (pointer: coarse) {
+  .paste-upload-btn {
+    display: inline-flex;
+  }
+}
 
 .upload-btn:hover {
   background: #5a4430;
