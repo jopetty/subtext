@@ -46,5 +46,6 @@ copy_file "webcard.jpg"
 # Static directories used by runtime.
 copy_dir "fonts"
 copy_dir "icons"
+copy_dir "core"
 
 echo "Prepared Pages artifact at: $OUT_DIR"
