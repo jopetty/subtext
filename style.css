@@ -363,7 +363,7 @@
   --font-nunito: 'Nunito', 'Saira', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
 }
 
-@media (max-width: 769px) {
+@media (max-width: 769px), (pointer: coarse) {
   .paste-upload-btn {
     display: inline-flex;
   }

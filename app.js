@@ -3147,7 +3147,11 @@ function showUpload(opts = {}) {
 }
 
 fileInput.addEventListener('change', (e) => {
-  loadImageFile(e.target.files[0]);
+  const file = e.target.files?.[0] || null;
+  // iOS may retain the last picker value; clearing it lets the same photo be
+  // selected again and still emits a change event.
+  e.target.value = '';
+  loadImageFile(file);
 });
 
 async function pasteImageFromClipboard() {
