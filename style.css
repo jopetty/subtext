@@ -1228,13 +1228,13 @@ html, body {
   color: #fff;
 }
 
-#erase-toggle-btn.active {
+.erase-toggle-btn.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
 
-#erase-toggle-btn {
+.erase-toggle-btn {
   width: 28px;
   min-width: 28px;
   height: 28px;
@@ -1242,7 +1242,7 @@ html, body {
   gap: 0;
 }
 
-#erase-toggle-btn svg {
+.erase-toggle-btn svg {
   flex: 0 0 auto;
 }
 

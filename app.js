@@ -1823,7 +1823,7 @@ const exportBtn      = document.getElementById('export-btn');
 const copyBtn        = document.getElementById('copy-btn');
 const baseImage      = document.getElementById('base-image');
 const paintLayer     = document.getElementById('paint-layer');
-const eraseToggleBtn = document.getElementById('erase-toggle-btn');
+const eraseToggleBtns = document.querySelectorAll('.erase-toggle-btn');
 const ctrlEraseSize = document.getElementById('ctrl-erase-size');
 const ctrlEraseBackground = document.getElementById('ctrl-erase-background');
 const canvasWrapper   = document.getElementById('canvas-wrapper');
@@ -2819,13 +2819,13 @@ function isEraseInteractive() { return state.imageLoaded && state.erase.enabled;
 function syncEraseControls() {
   if (ctrlEraseSize) ctrlEraseSize.value = String(state.erase.size);
   if (ctrlEraseBackground) ctrlEraseBackground.checked = state.erase.applyToBackground;
-  if (eraseToggleBtn) {
+  eraseToggleBtns.forEach((eraseToggleBtn) => {
     eraseToggleBtn.classList.toggle('active', state.erase.enabled);
     eraseToggleBtn.setAttribute('aria-pressed', state.erase.enabled ? 'true' : 'false');
     const title = state.erase.enabled ? 'Erasing enabled' : 'Enable eraser';
     eraseToggleBtn.title = title;
     eraseToggleBtn.setAttribute('aria-label', title);
-  }
+  });
   syncBrushCursor();
 }
 
@@ -4695,14 +4695,14 @@ paintToggleBtns.forEach((btn) => {
   });
 });
 
-eraseToggleBtn?.addEventListener('click', () => {
+eraseToggleBtns.forEach((eraseToggleBtn) => eraseToggleBtn.addEventListener('click', () => {
   state.erase.enabled = !state.erase.enabled;
   state.paint.enabled = false;
   syncPaintControls();
   syncEraseControls();
   syncPaintInteractivity();
   deselectAll();
-});
+}));
 ctrlEraseSize?.addEventListener('input', () => {
   state.erase.size = Math.max(1, Math.min(128, parseInt(ctrlEraseSize.value, 10) || 24));
 });
