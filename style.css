@@ -280,6 +280,39 @@
   font-display: swap;
 }
 
+/* Comic Neue (SIL Open Font License; see fonts/ComicNeue-OFL.txt) */
+@font-face {
+  font-family: 'ComicNeue';
+  src: url('fonts/ComicNeue-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ComicNeue';
+  src: url('fonts/ComicNeue-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ComicNeue';
+  src: url('fonts/ComicNeue-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ComicNeue';
+  src: url('fonts/ComicNeue-BoldItalic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -304,6 +337,7 @@
 
   /* Centralized text font stacks for picker + render paths */
   --font-helvetica: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-comic-neue: 'ComicNeue', 'Comic Sans MS', cursive;
   --font-georgia: Georgia, 'Times New Roman', serif;
   --font-times: 'Times New Roman', Times, serif;
   --font-palatino: 'Palatino Linotype', 'Book Antiqua', Palatino, 'TeXGyrePagella', 'URW Palladio L', serif;
@@ -469,16 +503,13 @@ html, body {
   background: var(--border);
 }
 
-.draft-card-copy {
+.draft-card-actions {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex: 1;
   min-width: 0;
-}
-
-.draft-card-title {
-  margin: 0 0 0.35rem;
-  color: var(--ink-muted);
-  font-family: var(--font-serif);
-  font-size: 0.9rem;
-  font-style: italic;
 }
 
 .draft-open-btn,
@@ -497,8 +528,7 @@ html, body {
 }
 
 .draft-discard-btn {
-  margin-left: 0.75rem;
-  color: var(--ink-muted);
+  color: var(--danger);
 }
 
 .draft-open-btn:hover,

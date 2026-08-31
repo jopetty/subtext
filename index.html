@@ -28,7 +28,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Subtext" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="manifest" href="manifest.webmanifest?v=f286568ba1" />
+  <link rel="manifest" href="manifest.webmanifest?v=07c64e868e" />
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
@@ -51,7 +51,7 @@
   <link rel="preload" as="font" type="font/woff2" href="fonts/limelight-regular.woff2" crossorigin />
   <link rel="preload" as="font" type="font/woff2" href="fonts/instrument-serif-regular.woff2" crossorigin />
   <link rel="preload" as="font" type="font/woff2" href="fonts/instrument-serif-italic.woff2" crossorigin />
-  <link rel="stylesheet" href="style.css?v=f286568ba1" />
+  <link rel="stylesheet" href="style.css?v=07c64e868e" />
   <script
     data-goatcounter="https://jowenpetty.goatcounter.com/count"
     async
@@ -70,10 +70,9 @@
         <input type="file" id="file-input" accept="image/*" />
       </label>
       <p class="upload-hint">or drag &amp; drop &middot; paste from clipboard</p>
-      <section id="draft-card" class="draft-card hidden" aria-labelledby="draft-card-title">
+      <section id="draft-card" class="draft-card hidden" aria-label="Current project">
         <img id="draft-preview" class="draft-preview" alt="Preview of the current project" />
-        <div class="draft-card-copy">
-          <p id="draft-card-title" class="draft-card-title">Current project</p>
+        <div class="draft-card-actions">
           <button id="open-draft-btn" type="button" class="draft-open-btn">Open current project</button>
           <button id="discard-draft-btn" type="button" class="draft-discard-btn">Discard</button>
         </div>
@@ -153,6 +152,7 @@
           <div class="chip-scroller preset-chips">
             <div class="chip-track preset-chips-track">
               <button class="control-chip preset-chip" data-preset="normie">Normie</button>
+              <button class="control-chip preset-chip" data-preset="comic">Comic</button>
               <button class="control-chip preset-chip active" data-preset="classic">Classic</button>
               <button class="control-chip preset-chip" data-preset="cinema">Cin&eacute;ma</button>
               <button class="control-chip preset-chip" data-preset="vaporwave">Vaporwave</button>
@@ -169,6 +169,7 @@
           <div class="typeface-row">
             <select id="ctrl-font" class="native-font-select" aria-hidden="true" tabindex="-1">
               <option value="var(--font-helvetica)"       style="font-family:var(--font-helvetica)">Helvetica</option>
+              <option value="var(--font-comic-neue)"      style="font-family:var(--font-comic-neue)">Comic Neue</option>
               <option value="var(--font-georgia)"         style="font-family:var(--font-georgia)">Georgia</option>
               <option value="var(--font-times)"           style="font-family:var(--font-times)">Times New Roman</option>
               <option value="var(--font-palatino)"        style="font-family:var(--font-palatino)">Palatino</option>
@@ -572,6 +573,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/heic-to@1.3.0/dist/iife/heic-to.js"></script>
-  <script src="app.js?v=f286568ba1"></script>
+  <script src="app.js?v=07c64e868e"></script>
 </body>
 </html>

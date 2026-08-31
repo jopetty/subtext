@@ -246,6 +246,19 @@ const PRESETS = {
     outlineWidth: 0,
     blur:         0,
   },
+  comic: {
+    font:         "var(--font-comic-neue)",
+    size:         5,
+    lineHeight:   1.2,
+    rotateDeg:    0,
+    weight:       '400',
+    italic:       false,
+    align:        'center',
+    fgColor:      '#ffffff',
+    outlineColor: '#000000',
+    outlineWidth: 7,
+    blur:         0,
+  },
   classic: {
     font:         "var(--font-helvetica)",
     size:         5,   // percent of image width
@@ -2384,14 +2397,17 @@ async function restoreDraftSession(draft) {
   }
 }
 
-async function maybeRestoreDraftSession() {
-  const draft = await readDraftRecord();
+function showDraftCard(draft) {
   if (!draft?.imageBlob) return;
   _availableDraft = draft;
   if (_draftPreviewUrl) URL.revokeObjectURL(_draftPreviewUrl);
   _draftPreviewUrl = URL.createObjectURL(draft.imageBlob);
   draftPreview.src = _draftPreviewUrl;
   draftCard.classList.remove('hidden');
+}
+
+async function maybeRestoreDraftSession() {
+  showDraftCard(await readDraftRecord());
 }
 
 function hideDraftCard() {
@@ -3182,10 +3198,12 @@ window.addEventListener('paste', (e) => {
 });
 
 backBtn.addEventListener('click', async () => {
-  if (confirm('Start over? Your work will be lost, like tears in the rain.')) {
-    await discardDraftSession();
-    showUpload();
-  }
+  // Back is non-destructive: persist the current project, then expose it on
+  // the upload screen as a project the user can reopen.
+  const draft = await serializeDraftSession();
+  const saved = draft ? await writeDraftRecord(draft) : false;
+  showUpload({ preserveDraft: saved });
+  if (saved) showDraftCard(draft);
 });
 
 // ─── TextObject class ──────────────────────────────────────────────────────────
@@ -3224,6 +3242,7 @@ class TextObject {
     const wrap = document.createElement('div');
     wrap.className = 'text-field';
     wrap.dataset.id = this.id;
+    wrap.title = 'Hold Option/Alt while moving or rotating to temporarily disable snapping.';
 
     const del = document.createElement('div');
     del.className = 'text-field-delete';
@@ -3233,8 +3252,8 @@ class TextObject {
     const rotate = document.createElement('button');
     rotate.type = 'button';
     rotate.className = 'text-field-rotate';
-    rotate.title = 'Rotate';
-    rotate.setAttribute('aria-label', 'Rotate object');
+    rotate.title = 'Rotate (hold Option/Alt to disable snapping)';
+    rotate.setAttribute('aria-label', 'Rotate object; hold Option or Alt to disable snapping');
     rotate.innerHTML = '<img src="icons/switch_access_shortcut_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg?v=3" alt="" aria-hidden="true" />';
 
     const resize = document.createElement('button');
@@ -3477,6 +3496,7 @@ class ImageObject {
     const wrap = document.createElement('div');
     wrap.className = 'text-field image-object';
     wrap.dataset.id = this.id;
+    wrap.title = 'Hold Option/Alt while moving or rotating to temporarily disable snapping.';
 
     const del = document.createElement('div');
     del.className = 'text-field-delete';
@@ -3486,8 +3506,8 @@ class ImageObject {
     const rotate = document.createElement('button');
     rotate.type = 'button';
     rotate.className = 'text-field-rotate';
-    rotate.title = 'Rotate';
-    rotate.setAttribute('aria-label', 'Rotate object');
+    rotate.title = 'Rotate (hold Option/Alt to disable snapping)';
+    rotate.setAttribute('aria-label', 'Rotate object; hold Option or Alt to disable snapping');
     rotate.innerHTML = '<img src="icons/switch_access_shortcut_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg?v=3" alt="" aria-hidden="true" />';
 
     const resize = document.createElement('button');
@@ -4006,8 +4026,17 @@ function startDrag(e, tf, opts = {}) {
     const rawX = Math.max(0, Math.min(1, origXPct + dx / cw));
     const rawY = Math.max(0, Math.min(1, origYPct + dy / ch));
 
-    ({ pos: tf.xPct, snap: snapX } = snapAxis(rawX, snapX));
-    ({ pos: tf.yPct, snap: snapY } = snapAxis(rawY, snapY));
+    if (ev.altKey) {
+      // Option/Alt is the conventional temporary "ignore constraints" modifier.
+      // Drop existing locks so re-enabling snapping starts from the raw position.
+      tf.xPct = rawX;
+      tf.yPct = rawY;
+      snapX = null;
+      snapY = null;
+    } else {
+      ({ pos: tf.xPct, snap: snapX } = snapAxis(rawX, snapX));
+      ({ pos: tf.yPct, snap: snapY } = snapAxis(rawY, snapY));
+    }
 
     tf.repositionFast?.();
     if (state.selectedObject === tf) syncSizeControlBoundsForObject(tf);
@@ -4095,7 +4124,12 @@ function startRotate(e, tf) {
     const angle = Math.atan2(ev.clientY - centerY, ev.clientX - centerX);
     const deltaDeg = angleDeltaDeg(startAngle, angle);
     const rawDeg = origDeg + deltaDeg;
-    ({ deg: tf.style.rotateDeg, snap: snapDeg } = snapRotationDeg(rawDeg, snapDeg));
+    if (ev.altKey) {
+      tf.style.rotateDeg = rawDeg;
+      snapDeg = null;
+    } else {
+      ({ deg: tf.style.rotateDeg, snap: snapDeg } = snapRotationDeg(rawDeg, snapDeg));
+    }
     tf.repositionFast?.();
     tf.rotateEl.classList.toggle('snapped', snapDeg !== null);
     showRotateGuides(true, tf.xPct, tf.yPct, getRotationSnapAxis(snapDeg));
